@@ -86,45 +86,6 @@ export function backgroundPlain(w: number, h: number) {
   return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#ffffff"/></svg>`);
 }
 
-/** Santa hat. Anchor: centre of white band is at (0.5, 0.82) of the image. */
-export const santaHat = svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="480" height="400" viewBox="0 0 240 200">
-<path d="M28 158 C40 92 92 30 170 26 C202 24 216 46 208 72 C196 60 178 60 168 72 C158 86 190 128 214 158 Z" fill="#df7f7c"/>
-<path d="M120 158 C150 120 160 90 168 72 C158 86 190 128 214 158 Z" fill="#c86a68" opacity="0.45"/>
-<circle cx="208" cy="74" r="21" fill="#fffaf3" stroke="#ebe1d4" stroke-width="2"/>
-<rect x="12" y="140" width="216" height="46" rx="23" fill="#fffaf3" stroke="#ebe1d4" stroke-width="2"/>
-<path d="M32 170 Q120 161 210 170" stroke="#f0e7da" stroke-width="5" fill="none" stroke-linecap="round"/>
-</svg>`);
-
-/** Striped scarf. Anchor: band centre at (0.5, 0.36). */
-export const scarf = svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="340" viewBox="0 0 300 170">
-<defs><pattern id="s" width="36" height="200" patternUnits="userSpaceOnUse"><rect width="36" height="200" fill="#e39f9c"/><rect x="18" width="9" height="200" fill="#9fc4a9"/><rect x="29" width="4" height="200" fill="#fff8ee"/></pattern></defs>
-<path d="M190 70 L238 66 L250 152 L204 156 Z" fill="url(#s)" stroke="#c98886" stroke-width="1.5"/>
-<path d="M206 156 l2 11 M214 156 l2 11 M222 155 l2 11 M230 154 l2 11 M238 154 l2 11 M246 153 l2 11" stroke="#e39f9c" stroke-width="4" stroke-linecap="round"/>
-<path d="M8 32 Q150 96 292 32 L292 80 Q150 142 8 80 Z" fill="url(#s)" stroke="#c98886" stroke-width="1.5"/>
-<path d="M8 80 Q150 142 292 80 L292 72 Q150 132 8 72 Z" fill="#000" opacity="0.07"/>
-</svg>`);
-
-/** String of Christmas lights. Anchor: wire mid-point at (0.5, 0.4). */
-export const lights = (() => {
-  const colors = ['#f2a3a3', '#f3d68c', '#a6d5bd', '#a9c4ea', '#e6b3d6'];
-  const p = (t: number) => {
-    const x = 2 * (1 - t) * t * 200 + t * t * 400;
-    const y = (1 - t) * (1 - t) * 20 + 2 * (1 - t) * t * 110 + t * t * 20;
-    return [x, y];
-  };
-  let bulbs = '';
-  const n = 9;
-  for (let i = 0; i < n; i++) {
-    const t = 0.06 + (i / (n - 1)) * 0.88;
-    const [x, y] = p(t);
-    const c = colors[i % colors.length];
-    const rot = (t - 0.5) * 40;
-    bulbs += `<g transform="translate(${x} ${y}) rotate(${rot})"><rect x="-5" y="0" width="10" height="7" rx="2" fill="#8d958f"/><ellipse cx="0" cy="18" rx="8" ry="13" fill="${c}"/><ellipse cx="-3" cy="13" rx="2.2" ry="4.5" fill="#fff" opacity="0.5"/></g>`;
-  }
-  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="280" viewBox="0 0 400 140">
-<path d="M0 20 Q200 110 400 20" stroke="#8aa592" stroke-width="3.5" fill="none"/>${bulbs}</svg>`);
-})();
-
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();

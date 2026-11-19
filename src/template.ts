@@ -1,8 +1,8 @@
 // A template is pure data. In the Shopify app this JSON lives in the DB / a metafield
 // and is assigned to products from the admin. Adding a new design = new JSON + images.
-import { backgroundStars, backgroundSnow, backgroundBlush, backgroundPlain, santaHat, scarf, lights } from './assets';
+import { backgroundStars, backgroundSnow, backgroundBlush, backgroundPlain } from './assets';
 
-export type AccessoryKind = 'hat' | 'scarf' | 'lights';
+const examples = `${import.meta.env.BASE_URL}examples/`;
 
 export interface Template {
   id: string;
@@ -16,20 +16,18 @@ export interface Template {
   backgrounds: { id: string; label: string; src: string; textColor: string }[];
   fonts: string[];
   textColors: string[];
-  /** Soft pastel treatment applied to the cut-out pet photo. */
-  photoFilter: 'soft' | 'none';
-  maxPets: number;
   /** Where the movable design sits by default, in face px (centre point) and its default scale. */
   design: { x: number; y: number; scale: number; minScale: number; maxScale: number };
-  /** Pet slots relative to the design centre: x = centre, y = bottom of pet, h = max pet height. */
-  petLayouts: Record<number, { x: number; y: number; h: number }[]>;
-  accessoryOptions: { id: string; label: string; items: AccessoryKind[] }[];
-  accessoryArt: Record<AccessoryKind, string>;
+  /** Pet relative to the design centre: x = centre, y = bottom of pet, h = max pet height. */
+  pet: { x: number; y: number; h: number };
+  /** AI illustration styles. `id` must match a prompt in worker/src/index.ts. `example` is shown before upload. */
+  styles: { id: string; label: string; example: string }[];
+  defaultStyle: string;
   /** Fixed greeting text (not movable), face px. */
   greeting: { default: string; x: number; y: number; fontSize: number };
-  petName: { fontSize: number; gap: number };
-  /** AI illustration: tries per uploaded pet photo (the worker also enforces per-visitor/day limits). */
-  ai: { triesPerPet: number };
+  petName: { default: string; fontSize: number; gap: number };
+  /** AI tries per uploaded photo (the worker also enforces per-visitor/day limits). */
+  ai: { triesPerPhoto: number };
 }
 
 const W = 2475;
@@ -50,28 +48,15 @@ export const christmasPetMug: Template = {
   ],
   fonts: ['Great Vibes', 'Dancing Script', 'Pacifico', 'Mountains of Christmas', 'Fredoka'],
   textColors: ['#3f3f46', '#a8646c', '#6f8f76', '#5f7a96', '#b8953f'],
-  photoFilter: 'soft',
-  maxPets: 3,
   design: { x: FW / 2, y: H * 0.6, scale: 1, minScale: 0.3, maxScale: 2.5 },
-  petLayouts: {
-    1: [{ x: 0, y: 220, h: 540 }],
-    2: [
-      { x: -250, y: 220, h: 480 },
-      { x: 250, y: 220, h: 480 },
-    ],
-    3: [
-      { x: -350, y: 220, h: 410 },
-      { x: 0, y: 220, h: 430 },
-      { x: 350, y: 220, h: 410 },
-    ],
-  },
-  accessoryOptions: [
-    { id: 'none', label: 'No accessories', items: [] },
-    { id: 'hat-scarf', label: 'Santa hat + scarf', items: ['hat', 'scarf'] },
-    { id: 'hat-lights', label: 'Santa hat + lights', items: ['hat', 'lights'] },
+  pet: { x: 0, y: 220, h: 560 },
+  styles: [
+    { id: 'hat-scarf', label: 'Santa hat + scarf', example: `${examples}example-hat-scarf.webp` },
+    { id: 'hat-lights', label: 'Santa hat + lights', example: `${examples}example-hat-lights.webp` },
+    { id: 'none', label: 'No accessories', example: `${examples}example-none.webp` },
   ],
-  accessoryArt: { hat: santaHat, scarf, lights },
+  defaultStyle: 'hat-scarf',
   greeting: { default: 'Vesel božič', x: FW / 2, y: 105, fontSize: 130 },
-  petName: { fontSize: 96, gap: 0 },
-  ai: { triesPerPet: 3 },
+  petName: { default: 'Luna', fontSize: 96, gap: 0 },
+  ai: { triesPerPhoto: 3 },
 };

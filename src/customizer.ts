@@ -1,13 +1,16 @@
 // Embeddable customizer widget. Same bundle is used by the standalone demo
 // and (later) by the Shopify theme app extension.
 //
-// Model: the print is split into `tpl.sides` faces (2 for a mug: one per side) and the SAME
-// design is printed on every face. The editor shows one mug per face; the design is a single
-// unit (pets + accessories + names) that is dragged/scaled/rotated directly on the mug.
+// Flow: before upload the mug shows an example illustration for the selected style. When the customer
+// uploads a photo, the AI illustration for the selected style is generated automatically and used on the
+// mug (the raw photo is never placed on the mug). Switching style generates that style once and caches it.
+//
+// Model: the print is split into `tpl.sides` faces (2 for a mug: one per side) and the SAME design is
+// printed on every face. The design (pet + name) is one unit dragged/scaled/rotated directly on the mug.
 import Konva from 'konva';
-import type { AccessoryKind, Template } from './template';
+import type { Template } from './template';
 import { loadImage } from './assets';
-import { processPetPhoto, type ProcessedPet } from './petPhoto';
+import { cutout, preloadBackgroundRemoval } from './petPhoto';
 import { createMugPreview } from './mug3d';
 import { drawMug } from './mugMockup';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
@@ -25,20 +28,6 @@ export interface CustomizerOptions {
   onAddToCart?: (p: Personalization) => void | Promise<void>;
 }
 
-interface PetState {
-  name: string;
-  accessory: string;
-  status: 'empty' | 'processing' | 'ready' | 'error';
-  message: string;
-  photo?: ProcessedPet;
-  /** AI illustration (accessories are painted in), and the accessory set it was generated with. */
-  ai?: { photo: ProcessedPet; accessory: string };
-  useAi: boolean;
-  aiBusy: boolean;
-  aiMsg: string;
-  aiTriesLeft: number;
-}
-
 const ICONS: Record<string, string> = {
   zoomIn: '<circle cx="10" cy="10" r="6.5"/><path d="M15 15l5 5M10 7v6M7 10h6"/>',
   zoomOut: '<circle cx="10" cy="10" r="6.5"/><path d="M15 15l5 5M7 10h6"/>',
@@ -54,29 +43,32 @@ const icon = (k: string) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: CustomizerOptions = {}) {
   const FW = tpl.print.width / tpl.sides;
   const FH = tpl.print.height;
 
   const state = {
-    petCount: 1,
     background: tpl.backgrounds[0].id,
     greeting: tpl.greeting.default,
     font: tpl.fonts[0],
     textColor: tpl.backgrounds[0].textColor,
     mirror: false,
-    pets: Array.from({ length: tpl.maxPets }, (_, i): PetState => ({
-      name: ['Luna', 'Max', 'Bella'][i] ?? '',
-      accessory: tpl.accessoryOptions[1]?.id ?? 'none',
-      status: 'empty',
-      message: '',
-      useAi: false,
-      aiBusy: false,
-      aiMsg: '',
-      aiTriesLeft: tpl.ai.triesPerPet,
-    })),
+    name: tpl.petName.default,
+    style: tpl.defaultStyle,
+    photo: undefined as File | undefined,
+    photoThumb: '',
+    /** Finished illustrations (background removed) per style id, for the current photo. */
+    illustrations: {} as Record<string, HTMLCanvasElement>,
+    /** Last illustration shown, kept on screen while another style is being painted. */
+    lastShown: undefined as HTMLCanvasElement | undefined,
+    busy: false,
+    busyMsg: '',
+    error: '',
+    triesLeft: tpl.ai.triesPerPhoto,
   };
+  const own = () => state.illustrations[state.style];
 
   root.classList.add('pc');
   root.innerHTML = `
@@ -99,15 +91,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
           <button type="button" data-tool="right" aria-label="Move right" title="Move right">${icon('right')}</button>
         </div>
         <div class="pc-tools pc-tools-wide">
-          <button type="button" data-tool="mirror">${icon('mirror')}<span>Mirror photo</span></button>
+          <button type="button" data-tool="mirror">${icon('mirror')}<span>Mirror pet</span></button>
           <button type="button" data-tool="reset"><span>Start over</span></button>
         </div>
       </div>
       <div class="pc-mug3d" data-panel="3d" hidden></div>
     </div>
     <form class="pc-panel" autocomplete="off">
-      <fieldset><legend>Number of pets</legend><div class="pc-seg" data-field="petCount"></div></fieldset>
-      <div class="pc-pets"></div>
+      <fieldset><legend>Your pet</legend><div class="pc-pet"></div></fieldset>
+      <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div></fieldset>
       <fieldset><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
       <fieldset><legend>Text</legend>
         <input type="text" class="pc-input" data-field="greeting" maxlength="28" placeholder="Greeting (optional)">
@@ -118,16 +110,17 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         <button type="button" class="pc-btn pc-btn-ghost" data-action="download">Download print file</button>
         <button type="button" class="pc-btn" data-action="cart">Add to cart</button>
       </div>
+      <p class="pc-actions-msg" role="status"></p>
     </form>`;
 
   const $ = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as T;
 
   // ---------- assets ----------
-  const accessoryImgs = Object.fromEntries(
-    await Promise.all(Object.entries(tpl.accessoryArt).map(async ([k, src]) => [k, await loadImage(src)])),
-  ) as Record<AccessoryKind, HTMLImageElement>;
   const bgImgs = Object.fromEntries(
     await Promise.all(tpl.backgrounds.map(async (b) => [b.id, await loadImage(b.src)])),
+  ) as Record<string, HTMLImageElement>;
+  const exampleImgs = Object.fromEntries(
+    await Promise.all(tpl.styles.map(async (s) => [s.id, await loadImage(s.example)])),
   ) as Record<string, HTMLImageElement>;
 
   // ---------- Konva stage ----------
@@ -184,79 +177,40 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   uiLayer.add(tr);
 
   // ---------- design content (identical on every face) ----------
-  function makeAccessory(kind: AccessoryKind, fit: ProcessedPet['fit']) {
-    const img = accessoryImgs[kind];
-    const ar = img.height / img.width;
-    let w: number, cx: number, cy: number, ay: number, rot = 0;
-    if (kind === 'hat') {
-      w = fit.headW * 1.15;
-      cx = fit.headCx + fit.headW * 0.05;
-      cy = fit.headTop + fit.headW * 0.2;
-      ay = 0.82;
-      rot = -10;
-    } else if (kind === 'scarf') {
-      w = fit.neckW * 1.25;
-      cx = fit.neckCx;
-      cy = fit.neckY;
-      ay = 0.36;
-    } else {
-      w = fit.bodyW * 1.15;
-      cx = fit.bodyCx;
-      cy = fit.bodyY;
-      ay = 0.4;
-    }
-    const h = w * ar;
-    return new Konva.Image({ image: img, width: w, height: h, offsetX: w / 2, offsetY: h * ay, x: cx, y: cy, rotation: rot });
-  }
-
   function buildDesign(g: Konva.Group) {
     g.destroyChildren();
-    const layout = tpl.petLayouts[state.petCount];
-    state.pets.slice(0, state.petCount).forEach((pet, i) => {
-      const slot = layout[i];
-      const usingAi = pet.useAi && !!pet.ai;
-      const source = usingAi ? pet.ai!.photo : pet.photo;
-      if (source) {
-        const { canvas, fit } = source;
-        const scale = Math.min(slot.h / canvas.height, (slot.h * 1.1) / canvas.width);
-        // Mirror flips the pet (and its accessories) around its own centre; text is never mirrored.
-        const flip = new Konva.Group({ x: slot.x, y: slot.y, scaleX: state.mirror ? -1 : 1 });
-        const inner = new Konva.Group({ scaleX: scale, scaleY: scale, offsetX: canvas.width / 2, offsetY: canvas.height });
-        inner.add(new Konva.Image({ image: canvas }));
-        // AI illustrations already have the accessories painted in.
-        const items = usingAi ? [] : (tpl.accessoryOptions.find((a) => a.id === pet.accessory)?.items ?? []);
-        const ordered = [...items.filter((k) => k !== 'hat'), ...items.filter((k) => k === 'hat')];
-        for (const kind of ordered) inner.add(makeAccessory(kind, fit));
-        flip.add(inner);
-        g.add(flip);
-      } else {
-        const w = slot.h * 0.72;
-        const ph = new Konva.Group({ name: 'placeholder' });
-        ph.setAttr('petIndex', i);
-        ph.add(
-          new Konva.Rect({ x: slot.x - w / 2, y: slot.y - slot.h, width: w, height: slot.h, cornerRadius: 40, stroke: '#b9b0a5', strokeWidth: 5, dash: [22, 16], fill: 'rgba(255,255,255,0.55)' }),
-          new Konva.Text({ text: `+\nPet ${i + 1}`, x: slot.x - w / 2, y: slot.y - slot.h / 2 - 90, width: w, align: 'center', fontSize: 76, lineHeight: 1.1, fontFamily: 'Fredoka', fill: '#9a9086' }),
-        );
-        g.add(ph);
+    const slot = tpl.pet;
+    const mine = own();
+    // What to show: own illustration > previous illustration (while painting another style) > example.
+    const img: CanvasImageSource = mine ?? (state.photo && state.lastShown ? state.lastShown : exampleImgs[state.style]);
+    const iw = (img as HTMLCanvasElement).width;
+    const ih = (img as HTMLCanvasElement).height;
+    const pending = !!state.photo && !mine; // photo uploaded but this style isn't painted (yet)
+    const scale = Math.min(slot.h / ih, (slot.h * 1.1) / iw);
+
+    // Mirror flips the pet around its own centre; text is never mirrored.
+    const flip = new Konva.Group({ x: slot.x, y: slot.y, scaleX: state.mirror ? -1 : 1 });
+    flip.add(new Konva.Image({ image: img, width: iw * scale, height: ih * scale, offsetX: (iw * scale) / 2, offsetY: ih * scale, opacity: pending ? 0.3 : 1 }));
+    g.add(flip);
+
+    if (pending) {
+      const msg = state.busy ? 'Painting your pet…' : state.error ? 'Not painted yet' : '';
+      if (msg) {
+        const t = new Konva.Text({ name: 'placeholder', text: msg, y: slot.y - slot.h / 2 - 40, fontSize: 70, fontFamily: 'Fredoka', fill: '#7d7067', align: 'center' });
+        t.offsetX(t.width() / 2);
+        t.x(slot.x);
+        g.add(t);
       }
-      if (pet.name.trim()) {
-        const tw = slot.h * 1.5;
-        g.add(
-          new Konva.Text({
-            text: pet.name,
-            x: slot.x - tw / 2,
-            y: slot.y + tpl.petName.gap,
-            width: tw,
-            align: 'center',
-            wrap: 'none',
-            fontSize: tpl.petName.fontSize,
-            fontFamily: state.font,
-            fill: state.textColor,
-          }),
-        );
-      }
-    });
-    // Invisible hit area so the gaps between pets are draggable too.
+    }
+
+    if (state.name.trim()) {
+      const name = new Konva.Text({ text: state.name, y: slot.y + tpl.petName.gap, wrap: 'none', fontSize: tpl.petName.fontSize, fontFamily: state.font, fill: state.textColor });
+      name.offsetX(name.width() / 2);
+      name.x(slot.x);
+      g.add(name);
+    }
+
+    // Invisible hit area so the whole design (incl. gaps) is draggable.
     const box = g.getClientRect({ relativeTo: g, skipShadow: true, skipStroke: true });
     const pad = 20;
     const hit = new Konva.Rect({ x: box.x - pad, y: box.y - pad, width: box.width + pad * 2, height: box.height + pad * 2, fill: 'rgba(0,0,0,0)' });
@@ -321,17 +275,16 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     tr.nodes(i >= 0 && faces[i].face.visible() ? [designs[i]] : []);
   }
   const lastVisible = () => faces.map((f) => f.face.visible()).lastIndexOf(true);
+  const openUpload = () => root.querySelector<HTMLInputElement>('input[type=file][data-photo]')?.click();
 
   stage.on('click tap', (e) => {
-    const t = e.target;
-    const design = t.findAncestor('.design', true) as Konva.Group | undefined;
+    const design = e.target.findAncestor('.design', true) as Konva.Group | undefined;
     if (!design) {
       tr.nodes([]);
       return;
     }
     select(designs.indexOf(design));
-    const ph = t.findAncestor('.placeholder', true);
-    if (ph) root.querySelector<HTMLInputElement>(`input[type=file][data-pet="${ph.getAttr('petIndex')}"]`)?.click();
+    if (!state.photo) openUpload(); // tapping the example invites the upload
   });
   // Pressing on a design selects it immediately (so you see handles while dragging).
   stage.on('mousedown touchstart', (e) => {
@@ -497,25 +450,67 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     prev.height = Math.round((800 * print.height) / print.width);
     prev.getContext('2d')!.drawImage(print, 0, 0, prev.width, prev.height);
     const options: Record<string, string> = {
-      Pets: String(state.petCount),
+      'Pet name': state.name,
+      Style: tpl.styles.find((s) => s.id === state.style)!.label,
       Background: tpl.backgrounds.find((b) => b.id === state.background)!.label,
       Greeting: state.greeting,
       Font: state.font,
       'Text color': state.textColor,
       Mirrored: state.mirror ? 'Yes' : 'No',
     };
-    state.pets.slice(0, state.petCount).forEach((p, i) => {
-      options[`Pet ${i + 1} name`] = p.name;
-      const acc = p.useAi && p.ai ? p.ai.accessory : p.accessory;
-      options[`Pet ${i + 1} accessories`] = tpl.accessoryOptions.find((a) => a.id === acc)!.label;
-      options[`Pet ${i + 1} style`] = p.useAi && p.ai ? 'AI illustration' : 'Photo';
-    });
     return { templateId: tpl.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
   }
 
   // ---------- panel ----------
-  const segEl = $('[data-field=petCount]');
-  segEl.innerHTML = Array.from({ length: tpl.maxPets }, (_, i) => `<button type="button" data-v="${i + 1}">${i + 1}</button>`).join('');
+  const petEl = $('.pc-pet');
+  const stylesEl = $('.pc-styles');
+  const aiEl = $('.pc-ai');
+  const actionsMsg = $('.pc-actions-msg');
+
+  function renderPetPanel() {
+    const text = state.busy ? state.busyMsg : state.photo ? 'Change photo' : "Upload your pet's photo";
+    petEl.innerHTML = `
+      <label class="pc-upload ${state.busy ? 'processing' : state.photo ? 'ready' : ''}">
+        <input type="file" accept="image/*" data-photo hidden ${state.busy ? 'disabled' : ''}>
+        ${state.photoThumb ? `<img src="${state.photoThumb}" alt="">` : '<span class="pc-upload-icon">＋</span>'}
+        <span class="pc-upload-text">${esc(text)}</span>
+      </label>
+      <input type="text" class="pc-input" data-field="name" maxlength="14" placeholder="Pet name" value="${esc(state.name)}">`;
+  }
+
+  function renderStyles() {
+    stylesEl.innerHTML = tpl.styles
+      .map((s) => {
+        const done = !!state.illustrations[s.id];
+        return `<button type="button" data-style="${s.id}" class="${s.id === state.style ? 'is-active' : ''}" aria-pressed="${s.id === state.style}">
+          <img src="${s.example}" alt=""><span>${esc(s.label)}</span>${state.photo && done ? '<i aria-label="ready">✓</i>' : ''}
+        </button>`;
+      })
+      .join('');
+    const canReroll = !!state.photo && !!own() && !state.busy && aiEnabled && state.triesLeft > 0;
+    const parts: string[] = [];
+    if (!state.photo) parts.push('<p class="pc-ai-note">Shown with an example pet. Upload a photo to paint your own.</p>');
+    if (state.busy) parts.push('<p class="pc-ai-note">Painting takes about 20–30 seconds.</p>');
+    if (state.error) parts.push(`<p class="pc-ai-msg">${esc(state.error)}</p>`);
+    if (state.photo && !state.busy && !own() && aiEnabled && state.triesLeft > 0)
+      parts.push(`<button type="button" class="pc-ai-btn" data-ai="paint"><span>✨ Paint this style</span><small>${state.triesLeft} left</small></button>`);
+    if (canReroll) parts.push(`<button type="button" class="pc-ai-btn pc-ai-btn-quiet" data-ai="paint"><span>↻ Paint again</span><small>${state.triesLeft} left</small></button>`);
+    if (state.photo && aiEnabled && state.triesLeft <= 0 && !state.busy) parts.push('<p class="pc-ai-note">No more paintings left for this photo today.</p>');
+    aiEl.innerHTML = parts.join('');
+  }
+
+  function renderAll() {
+    renderPetPanel();
+    renderStyles();
+    rebuildDesigns();
+  }
+
+  function syncPanel() {
+    root.querySelectorAll<HTMLButtonElement>('[data-field=background] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.background));
+    root.querySelectorAll<HTMLButtonElement>('[data-field=textColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.textColor));
+    $<HTMLSelectElement>('[data-field=font]').value = state.font;
+  }
+
   $('[data-field=background]').innerHTML = tpl.backgrounds
     .map((b) => `<button type="button" data-v="${b.id}" title="${b.label}"><img src="${b.src}" alt=""><span>${b.label}</span></button>`)
     .join('');
@@ -525,69 +520,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     .join('');
   $<HTMLInputElement>('[data-field=greeting]').value = state.greeting;
 
-  const petsEl = $('.pc-pets');
-  function renderPetsPanel() {
-    petsEl.innerHTML = state.pets
-      .slice(0, state.petCount)
-      .map(
-        (p, i) => `
-      <fieldset class="pc-pet" data-i="${i}"><legend>Pet ${i + 1}</legend>
-        <label class="pc-upload ${p.status}">
-          <input type="file" accept="image/*" data-pet="${i}" hidden>
-          ${p.photo ? `<img src="${p.photo.canvas.toDataURL()}" alt="">` : '<span class="pc-upload-icon">＋</span>'}
-          <span class="pc-upload-text">${
-            p.status === 'processing' ? p.message : p.status === 'ready' ? 'Change photo' : p.status === 'error' ? p.message : 'Upload photo'
-          }</span>
-        </label>
-        <input type="text" class="pc-input" data-pet-name="${i}" maxlength="14" placeholder="Pet name" value="${p.name.replace(/"/g, '&quot;')}">
-        <select class="pc-input" data-pet-acc="${i}">
-          ${tpl.accessoryOptions.map((a) => `<option value="${a.id}" ${a.id === p.accessory ? 'selected' : ''}>${a.label}</option>`).join('')}
-        </select>
-        ${aiBlock(p, i)}
-      </fieldset>`,
-      )
-      .join('');
-  }
-
-  function aiBlock(p: PetState, i: number) {
-    if (!aiEnabled || !p.photo) return '';
-    const label = p.aiBusy ? p.aiMsg || 'Painting…' : p.ai ? 'Paint again' : 'Make illustration';
-    const disabled = p.aiBusy || p.aiTriesLeft <= 0;
-    return `<div class="pc-ai">
-      <button type="button" class="pc-ai-btn ${p.aiBusy ? 'is-busy' : ''}" data-ai-gen="${i}" ${disabled ? 'disabled' : ''}>
-        <span>✨ ${label}</span>${p.aiBusy ? '' : `<small>${p.aiTriesLeft} of ${tpl.ai.triesPerPet} left</small>`}
-      </button>
-      ${p.aiBusy ? '<p class="pc-ai-note">This takes about 10–30 seconds.</p>' : ''}
-      ${
-        p.ai && !p.aiBusy
-          ? `<div class="pc-ai-toggle" role="group" aria-label="Pet ${i + 1} style">
-               <button type="button" data-ai-use="${i}" data-v="1" class="${p.useAi ? 'is-active' : ''}">Illustration</button>
-               <button type="button" data-ai-use="${i}" data-v="0" class="${p.useAi ? '' : 'is-active'}">Photo</button>
-             </div>`
-          : ''
-      }
-      ${p.useAi && p.ai && p.ai.accessory !== p.accessory && !p.aiBusy ? '<p class="pc-ai-note">Accessories changed. Paint again to apply them.</p>' : ''}
-      ${!p.aiBusy && p.aiMsg ? `<p class="pc-ai-msg">${p.aiMsg}</p>` : ''}
-      ${!p.aiBusy && !p.aiMsg && p.aiTriesLeft <= 0 ? '<p class="pc-ai-note">No illustrations left for this photo today.</p>' : ''}
-    </div>`;
-  }
-
-  function syncPanel() {
-    segEl.querySelectorAll('button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === String(state.petCount)));
-    root.querySelectorAll<HTMLButtonElement>('[data-field=background] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.background));
-    root.querySelectorAll<HTMLButtonElement>('[data-field=textColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.textColor));
-    $<HTMLSelectElement>('[data-field=font]').value = state.font;
-  }
-
   const pick = (e: Event) => (e.target as HTMLElement).closest('button')?.dataset.v;
-  segEl.addEventListener('click', (e) => {
-    const v = pick(e);
-    if (!v) return;
-    state.petCount = Number(v);
-    renderPetsPanel();
-    syncPanel();
-    rebuildDesigns();
-  });
   $('[data-field=background]').addEventListener('click', (e) => {
     const v = pick(e);
     if (!v) return;
@@ -618,96 +551,82 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     rebuildDesigns();
   });
 
-  petsEl.addEventListener('input', (e) => {
+  petEl.addEventListener('input', (e) => {
     const t = e.target as HTMLInputElement;
-    if (t.dataset.petName !== undefined) {
-      state.pets[Number(t.dataset.petName)].name = t.value;
+    if (t.dataset.field === 'name') {
+      state.name = t.value;
       rebuildDesigns();
     }
   });
-  petsEl.addEventListener('change', async (e) => {
+  petEl.addEventListener('change', (e) => {
     const t = e.target as HTMLInputElement;
-    if (t.dataset.petAcc !== undefined) {
-      state.pets[Number(t.dataset.petAcc)].accessory = t.value;
-      renderPetsPanel();
-      rebuildDesigns();
-    }
-    if (t.dataset.pet !== undefined && t.files?.[0]) await handleUpload(Number(t.dataset.pet), t.files[0]);
+    if (t.dataset.photo !== undefined && t.files?.[0]) void onUpload(t.files[0]);
   });
 
-  async function handleUpload(i: number, file: File) {
-    const pet = state.pets[i];
-    pet.status = 'processing';
-    pet.message = 'Preparing photo…';
-    pet.ai = undefined;
-    pet.useAi = false;
-    pet.aiMsg = '';
-    pet.aiTriesLeft = tpl.ai.triesPerPet;
-    renderPetsPanel();
-    const setMsg = (m: string) => {
-      pet.message = m;
-      const el = petsEl.querySelector(`.pc-pet[data-i="${i}"] .pc-upload-text`);
-      if (el) el.textContent = m;
-    };
-    try {
-      pet.photo = await processPetPhoto(file, setMsg, { soft: tpl.photoFilter === 'soft' });
-      pet.status = 'ready';
-      if (!pet.photo.backgroundRemoved) alert('Background removal failed for this photo, so the original is used.');
-    } catch (err) {
-      console.error(err);
-      pet.status = 'error';
-      pet.message = 'Could not read photo, try another';
-    }
-    renderPetsPanel();
+  stylesEl.addEventListener('click', (e) => {
+    const id = (e.target as HTMLElement).closest('button')?.dataset.style;
+    if (!id || id === state.style) return;
+    state.style = id;
+    state.error = '';
+    renderStyles();
     rebuildDesigns();
-    select(lastVisible());
+    // Paint the newly picked style automatically (once; cached afterwards).
+    if (state.photo && !own() && !state.busy) void paint(id);
+  });
+  aiEl.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('[data-ai=paint]')) void paint(state.style);
+  });
+
+  // ---------- upload + AI ----------
+  async function onUpload(file: File) {
+    if (state.photoThumb) URL.revokeObjectURL(state.photoThumb);
+    state.photo = file;
+    state.photoThumb = URL.createObjectURL(file);
+    state.illustrations = {};
+    state.lastShown = undefined;
+    state.triesLeft = tpl.ai.triesPerPhoto;
+    state.error = '';
+    actionsMsg.textContent = '';
+    await paint(state.style);
   }
 
-  // ---------- AI illustration ----------
-  petsEl.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button');
-    if (!b) return;
-    if (b.dataset.aiGen !== undefined) void handleAi(Number(b.dataset.aiGen));
-    if (b.dataset.aiUse !== undefined) {
-      state.pets[Number(b.dataset.aiUse)].useAi = b.dataset.v === '1';
-      renderPetsPanel();
-      rebuildDesigns();
-    }
-  });
-
-  async function handleAi(i: number) {
-    const pet = state.pets[i];
-    if (!pet.photo || pet.aiBusy || pet.aiTriesLeft <= 0) return;
-    pet.aiBusy = true;
-    pet.aiMsg = 'Painting…';
-    renderPetsPanel();
+  async function paint(style: string) {
+    if (!state.photo || state.busy) return;
+    if (aiEnabled && state.triesLeft <= 0) return;
+    state.busy = true;
+    state.error = '';
+    state.busyMsg = 'Painting your pet…';
+    renderAll();
     const setMsg = (m: string) => {
-      pet.aiMsg = m;
-      const el = petsEl.querySelector(`[data-ai-gen="${i}"] span`);
-      if (el) el.textContent = `✨ ${m}`;
+      state.busyMsg = m;
+      const el = petEl.querySelector('.pc-upload-text');
+      if (el) el.textContent = m;
     };
+    void preloadBackgroundRemoval(); // download the cut-out model while the AI paints
     try {
-      const accessory = pet.accessory;
-      const { blob, remaining } = await illustrate(pet.photo.raw, accessory);
-      pet.aiTriesLeft--;
-      // The visitor's daily allowance is shared across pets.
-      state.pets.forEach((p) => (p.aiTriesLeft = Math.min(p.aiTriesLeft, remaining)));
-      const photo = await processPetPhoto(blob, setMsg, { soft: false });
-      pet.ai = { photo, accessory };
-      pet.useAi = true;
-      pet.aiMsg = '';
+      let image: Blob = state.photo;
+      if (aiEnabled) {
+        const { blob, remaining } = await illustrate(state.photo, style);
+        state.triesLeft = Math.min(state.triesLeft - 1, remaining);
+        image = blob;
+      }
+      setMsg('Finishing touches…');
+      const { canvas } = await cutout(image, setMsg);
+      state.illustrations[style] = canvas;
+      state.lastShown = canvas;
     } catch (err) {
       console.error(err);
-      if (err instanceof AiError && !['network', 'timeout', 'upstream_busy'].includes(err.code)) pet.aiTriesLeft--;
-      if (err instanceof AiError && err.remaining !== undefined) {
-        state.pets.forEach((p) => (p.aiTriesLeft = Math.min(p.aiTriesLeft, err.remaining!)));
-      }
-      pet.aiTriesLeft = Math.max(0, pet.aiTriesLeft);
-      pet.aiMsg = aiErrorMessage(err);
+      // Overload/network problems don't cost the customer a try.
+      if (err instanceof AiError && !['network', 'timeout', 'upstream_busy'].includes(err.code)) state.triesLeft--;
+      if (err instanceof AiError && err.remaining !== undefined) state.triesLeft = Math.min(state.triesLeft, err.remaining);
+      state.triesLeft = Math.max(0, state.triesLeft);
+      state.error = aiErrorMessage(err);
     }
-    pet.aiBusy = false;
-    renderPetsPanel();
-    rebuildDesigns();
+    state.busy = false;
+    renderAll();
+    select(lastVisible());
+    // The customer may have picked another style while we were painting.
+    if (state.style !== style && !own() && !state.error) void paint(state.style);
   }
 
   // Tabs
@@ -726,8 +645,14 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     }),
   );
 
-  // Actions
+  // Actions (only with the customer's own illustration, never the example)
+  function readyForExport() {
+    if (own()) return true;
+    actionsMsg.textContent = state.busy ? 'Please wait until your pet is painted.' : "Please upload your pet's photo first.";
+    return false;
+  }
   root.querySelector('[data-action=download]')!.addEventListener('click', async () => {
+    if (!readyForExport()) return;
     const p = await exportPersonalization();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(p.printBlob);
@@ -736,6 +661,8 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   });
   root.querySelector('[data-action=cart]')!.addEventListener('click', async () => {
+    if (!readyForExport()) return;
+    actionsMsg.textContent = '';
     const p = await exportPersonalization();
     await opts.onAddToCart?.(p);
   });
@@ -744,12 +671,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   await Promise.all(tpl.fonts.map((f) => document.fonts.load(`80px "${f}"`).catch(() => undefined)));
   applyBackground();
   applyText();
-  renderPetsPanel();
   syncPanel();
   layout();
-  designs.forEach(buildDesign);
+  renderAll();
   select(lastVisible());
-  changed();
 
   return { exportPersonalization };
 }
