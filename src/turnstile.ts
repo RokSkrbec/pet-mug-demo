@@ -53,6 +53,7 @@ export async function turnstileToken(container: HTMLElement): Promise<string | u
     id = ts.render(container, {
       sitekey: SITEKEY,
       appearance: 'interaction-only',
+      theme: 'light', // matches the pastel page (default follows the OS dark mode)
       action: 'paint',
       callback: (token: string) => done(() => resolve(token)),
       'error-callback': () => done(() => reject(new Error('bot_check'))),
