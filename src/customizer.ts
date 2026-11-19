@@ -1,26 +1,29 @@
 // Embeddable customizer widget. Same bundle is used by the standalone demo
 // and (later) by the Shopify theme app extension.
 //
-// Flow: before upload the mug shows an example illustration for the selected style. When the customer
-// uploads a photo, the AI illustration for the selected style is generated automatically and used on the
-// mug (the raw photo is never placed on the mug). Switching style generates that style once and caches it.
+// Flow: before upload the product shows an example illustration for the selected style. When the customer
+// uploads a photo, the AI illustration for the selected style is generated automatically and used (the raw
+// photo is never placed on a product). Switching style generates that style once and caches it.
 //
-// Model: the print is split into `tpl.sides` faces (2 for a mug: one per side) and the SAME design is
-// printed on every face. The design (pet + name) is one unit dragged/scaled/rotated directly on the mug.
+// Products: the SAME illustration/text is shown on every product (mug, pillow, t-shirt), so switching
+// products never costs another AI call. Each product has its own print size, mockup and design position.
+// A product's print can have several faces (`sides`, 2 on a mug) that all carry the same design.
 import Konva from 'konva';
-import type { Template } from './template';
+import type { ProductDef, Template } from './template';
 import { loadImage } from './assets';
 import { cutout, preloadBackgroundRemoval } from './petPhoto';
-import { createMugPreview } from './mug3d';
+import { createMugPreview, type MugPreview } from './mug3d';
 import { drawMug } from './mugMockup';
+import { drawPillow, drawTshirt, pillowPath, PILLOW_BOW, TEE_HEIGHT, TEE_PRINT } from './mockups';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
 
 export interface Personalization {
   templateId: string;
+  productId: string;
   options: Record<string, string>;
   /** Small JPEG for the cart/order preview. */
   previewDataUrl: string;
-  /** Full-resolution 300 DPI print file (PNG). */
+  /** Full-resolution print file (PNG; transparent for the t-shirt). */
   printBlob: Blob;
 }
 
@@ -38,6 +41,10 @@ const ICONS: Record<string, string> = {
   left: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   right: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   mirror: '<path d="M12 3v18" stroke-dasharray="2 2.5"/><path d="M9 7L3.5 17H9zM15 7l5.5 10H15z"/>',
+  mug: '<path d="M5 6h11v11a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/><path d="M16 9h1.5a2.5 2.5 0 0 1 0 5H16"/>',
+  pillow: '<path d="M4 5q8 2 16 0q-2 7 0 14q-8-2-16 0q2-7 0-14z"/>',
+  tshirt: '<path d="M9 4l-5 3 2 4 2-1v10h8V10l2 1 2-4-5-3a3 3 0 0 1-6 0z"/>',
+  cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
 };
 const icon = (k: string) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -45,13 +52,23 @@ const icon = (k: string) =>
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+interface Face {
+  face: Konva.Group;
+  bg?: Konva.Image;
+  greeting: Konva.Text;
+  design: Konva.Group;
+}
+type Transform = { x: number; y: number; scale: number; rotation: number };
+
 export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: CustomizerOptions = {}) {
-  const FW = tpl.print.width / tpl.sides;
-  const FH = tpl.print.height;
+  const product = (id: string) => tpl.products.find((p) => p.id === id)!;
+  const tshirt = tpl.products.find((p) => p.colors);
 
   const state = {
+    product: tpl.defaultProduct,
     background: tpl.backgrounds[0].id,
-    greeting: tpl.greeting.default,
+    shirtColor: tshirt?.colors?.[0].id ?? '',
+    greeting: tpl.greetingDefault,
     font: tpl.fonts[0],
     textColor: tpl.backgrounds[0].textColor,
     mirror: false,
@@ -59,7 +76,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     style: tpl.defaultStyle,
     photo: undefined as File | undefined,
     photoThumb: '',
-    /** Finished illustrations (background removed) per style id, for the current photo. */
+    /** Finished illustrations (background removed) per style id, for the current photo. Shared by all products. */
     illustrations: {} as Record<string, HTMLCanvasElement>,
     /** Last illustration shown, kept on screen while another style is being painted. */
     lastShown: undefined as HTMLCanvasElement | undefined,
@@ -67,19 +84,23 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     busyMsg: '',
     error: '',
     triesLeft: tpl.ai.triesPerPhoto,
+    /** Design position per product (each product has its own print area). */
+    transforms: {} as Record<string, Transform>,
   };
   const own = () => state.illustrations[state.style];
 
   root.classList.add('pc');
   root.innerHTML = `
     <div class="pc-preview">
-      <div class="pc-tabs" role="tablist">
-        <button type="button" class="pc-tab is-active" data-view="edit" role="tab">Edit on mug</button>
-        <button type="button" class="pc-tab" data-view="3d" role="tab">3D view</button>
+      <div class="pc-head">
+        <div class="pc-products" role="tablist" aria-label="Product">
+          ${tpl.products.map((p) => `<button type="button" role="tab" data-product="${p.id}">${icon(p.mockup)}<span>${esc(p.label)}</span></button>`).join('')}
+        </div>
+        <button type="button" class="pc-view3d" aria-pressed="false" hidden>${icon('cube')}<span>3D</span></button>
       </div>
       <div data-panel="edit">
-        <div class="pc-stage" tabindex="0" aria-label="Mug preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
-        <p class="pc-hint"><span class="pc-hint-mouse">Drag the design on the mug. Zoom with the mouse wheel, or use the buttons below and the arrow keys.</span><span class="pc-hint-touch">Drag the design with your finger. Pinch with two fingers to zoom, or use the buttons below.</span></p>
+        <div class="pc-stage" tabindex="0" aria-label="Product preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
+        <p class="pc-hint"><span class="pc-hint-mouse">Drag the design on the product. Zoom with the mouse wheel, or use the buttons below and the arrow keys.</span><span class="pc-hint-touch">Drag the design with your finger. Pinch with two fingers to zoom, or use the buttons below.</span></p>
         <div class="pc-tools">
           <button type="button" data-tool="zoomIn" aria-label="Zoom in" title="Zoom in">${icon('zoomIn')}</button>
           <button type="button" data-tool="zoomOut" aria-label="Zoom out" title="Zoom out">${icon('zoomOut')}</button>
@@ -100,7 +121,8 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     <form class="pc-panel" autocomplete="off">
       <fieldset><legend>Your pet</legend><div class="pc-pet"></div></fieldset>
       <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div></fieldset>
-      <fieldset><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
+      <fieldset data-section="background"><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
+      <fieldset data-section="shirt" hidden><legend>Shirt color</legend><div class="pc-colors pc-shirt-colors" data-field="shirtColor"></div></fieldset>
       <fieldset><legend>Text</legend>
         <input type="text" class="pc-input" data-field="greeting" maxlength="28" placeholder="Greeting (optional)">
         <select class="pc-input" data-field="font"></select>
@@ -116,48 +138,25 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   const $ = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as T;
 
   // ---------- assets ----------
-  const bgImgs = Object.fromEntries(
-    await Promise.all(tpl.backgrounds.map(async (b) => [b.id, await loadImage(b.src)])),
-  ) as Record<string, HTMLImageElement>;
   const exampleImgs = Object.fromEntries(
     await Promise.all(tpl.styles.map(async (s) => [s.id, await loadImage(s.example)])),
   ) as Record<string, HTMLImageElement>;
+  // Background patterns are rendered per product size, on demand, and cached.
+  const bgCache = new Map<string, Promise<HTMLImageElement>>();
+  const bgImage = (bgId: string, p: ProductDef) => {
+    const key = `${bgId}:${p.id}`;
+    if (!bgCache.has(key)) bgCache.set(key, loadImage(tpl.backgrounds.find((b) => b.id === bgId)!.render(p.print.width, p.print.height, p.design.scale)));
+    return bgCache.get(key)!;
+  };
 
   // ---------- Konva stage ----------
   const stageEl = $('.pc-stage');
   const stage = new Konva.Stage({ container: stageEl as HTMLDivElement, width: 10, height: 10 });
-  const mugLayer = new Konva.Layer({ listening: false });
-  const faceLayer = new Konva.Layer();
-  const shadeLayer = new Konva.Layer({ listening: false });
+  const mugLayer = new Konva.Layer({ listening: false }); // product body (under the print)
+  const faceLayer = new Konva.Layer(); // the print
+  const shadeLayer = new Konva.Layer({ listening: false }); // shading over the print
   const uiLayer = new Konva.Layer();
   stage.add(mugLayer, faceLayer, shadeLayer, uiLayer);
-
-  let exporting = false; // print export uses a plain rectangle instead of the curved mockup clip
-  let sag = 0; // curvature of the print's top/bottom edge on the mockup, in face px
-
-  const faces = Array.from({ length: tpl.sides }, (_, i) => {
-    const face = new Konva.Group({
-      clipFunc: (ctx) => {
-        if (exporting || !sag) {
-          ctx.rect(0, 0, FW, FH);
-          return;
-        }
-        // Quadratic curves through (FW/2, sag): the print follows the cylinder's perspective.
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(FW / 2, 2 * sag, FW, 0);
-        ctx.lineTo(FW, FH);
-        ctx.quadraticCurveTo(FW / 2, FH + 2 * sag, 0, FH);
-        ctx.closePath();
-      },
-    });
-    const bg = new Konva.Image({ image: undefined, width: FW, height: FH, crop: { x: i * FW, y: 0, width: FW, height: FH }, listening: false });
-    const greeting = new Konva.Text({ x: 0, y: tpl.greeting.y, width: FW, align: 'center', wrap: 'none', listening: false });
-    const design = new Konva.Group({ name: 'design', draggable: true });
-    face.add(bg, greeting, design);
-    faceLayer.add(face);
-    return { face, bg, greeting, design };
-  });
-  const designs = faces.map((f) => f.design);
 
   const tr = new Konva.Transformer({
     rotateEnabled: true,
@@ -174,7 +173,96 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     rotateAnchorOffset: 26,
     ignoreStroke: true,
   });
-  uiLayer.add(tr);
+  // Dashed outline of the printable area (t-shirt), shown while the design is selected.
+  const printArea = new Konva.Rect({ visible: false, listening: false, strokeWidth: 1.5, dash: [6, 5] });
+  uiLayer.add(printArea, tr);
+
+  let P = product(state.product);
+  let FW = 0;
+  let FH = 0;
+  let faces: Face[] = [];
+  let designs: Konva.Group[] = [];
+  let exporting = false; // print export uses a plain rectangle instead of the mockup clip
+  let sag = 0; // mug: curvature of the print's top/bottom edge on the mockup, in face px
+
+  function clipFor(p: ProductDef) {
+    return (ctx: Konva.Context) => {
+      if (exporting || p.mockup === 'tshirt' || (p.mockup === 'mug' && !sag)) {
+        ctx.rect(0, 0, FW, FH);
+        return;
+      }
+      if (p.mockup === 'pillow') {
+        pillowPath(ctx, 0, 0, FW, FW * PILLOW_BOW);
+        return;
+      }
+      // mug: quadratic curves through (FW/2, sag) follow the cylinder's perspective
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(FW / 2, 2 * sag, FW, 0);
+      ctx.lineTo(FW, FH);
+      ctx.quadraticCurveTo(FW / 2, FH + 2 * sag, 0, FH);
+      ctx.closePath();
+    };
+  }
+
+  const zoomMin = () => P.design.scale * tpl.zoom.min;
+  const zoomMax = () => P.design.scale * tpl.zoom.max;
+  const defaultTransform = (): Transform => ({ x: P.design.x, y: P.design.y, scale: P.design.scale, rotation: 0 });
+  const toAttrs = (t: Transform) => ({ x: t.x, y: t.y, scaleX: t.scale, scaleY: t.scale, rotation: t.rotation });
+  const saveTransform = () => {
+    const d = designs[0];
+    if (d) state.transforms[P.id] = { x: d.x(), y: d.y(), scale: d.scaleX(), rotation: d.rotation() };
+  };
+
+  /** (Re)build the print faces for the current product. */
+  function setupProduct() {
+    saveTransform();
+    tr.nodes([]);
+    faceLayer.destroyChildren();
+    P = product(state.product);
+    FW = P.print.width / P.sides;
+    FH = P.print.height;
+    faces = Array.from({ length: P.sides }, (_, i): Face => {
+      const face = new Konva.Group({ clipFunc: clipFor(P) });
+      const bg = P.background
+        ? new Konva.Image({ image: undefined, width: FW, height: FH, crop: { x: i * FW, y: 0, width: FW, height: FH }, listening: false })
+        : undefined;
+      const greeting = new Konva.Text({ x: 0, y: P.greeting.y, width: FW, align: 'center', wrap: 'none', listening: false });
+      const design = new Konva.Group({ name: 'design', draggable: true });
+      if (bg) face.add(bg);
+      face.add(greeting, design);
+      faceLayer.add(face);
+      return { face, bg, greeting, design };
+    });
+    designs = faces.map((f) => f.design);
+    designs.forEach((d) => {
+      d.setAttrs(toAttrs(state.transforms[P.id] ?? defaultTransform()));
+      const sync = () => designs.forEach((o) => o !== d && o.setAttrs({ x: d.x(), y: d.y(), scaleX: d.scaleX(), scaleY: d.scaleY(), rotation: d.rotation() }));
+      d.on('dragmove', sync);
+      d.on('transform', () => {
+        const s = clamp(d.scaleX(), zoomMin(), zoomMax());
+        d.scale({ x: s, y: s });
+        sync();
+      });
+      d.on('dragend transformend', () => {
+        saveTransform();
+        changed();
+      });
+    });
+    void applyBackground();
+    applyText();
+    designs.forEach(buildDesign);
+    // UI that depends on the product
+    root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.product === P.id);
+      b.setAttribute('aria-selected', String(b.dataset.product === P.id));
+    });
+    $<HTMLElement>('[data-section=background]').hidden = !P.background;
+    $<HTMLElement>('[data-section=shirt]').hidden = !P.colors;
+    view3dBtn.hidden = !P.mug3d;
+    if (!P.mug3d && show3d) toggle3d(false);
+    layout();
+    select(lastVisible());
+  }
 
   // ---------- design content (identical on every face) ----------
   function buildDesign(g: Konva.Group) {
@@ -229,50 +317,44 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       greeting.text(state.greeting);
       greeting.fontFamily(state.font);
       greeting.fill(state.textColor);
-      greeting.fontSize(tpl.greeting.fontSize);
+      greeting.fontSize(P.greeting.fontSize);
       const w = greeting.measureSize(state.greeting).width;
-      if (w > FW * 0.86) greeting.fontSize((tpl.greeting.fontSize * FW * 0.86) / w);
+      if (w > FW * 0.86) greeting.fontSize((P.greeting.fontSize * FW * 0.86) / w);
     });
   }
 
-  function applyBackground() {
-    faces.forEach(({ bg }) => bg.image(bgImgs[state.background]));
+  async function applyBackground() {
+    if (!P.background) return;
+    const p = P;
+    const img = await bgImage(state.background, p);
+    if (p !== P) return; // product changed meanwhile
+    faces.forEach(({ bg }) => bg?.image(img));
+    changed();
   }
 
   // ---------- transforms (always applied to every face) ----------
-  const designDefaults = () => ({ x: tpl.design.x, y: tpl.design.y, scaleX: tpl.design.scale, scaleY: tpl.design.scale, rotation: 0 });
-  designs.forEach((d) => d.setAttrs(designDefaults()));
-
   function applyAll(a: Partial<Konva.NodeConfig>) {
     designs.forEach((d) => d.setAttrs(a));
+    saveTransform();
     tr.forceUpdate();
     changed();
   }
   const cur = () => designs[0];
   const zoomBy = (f: number) => {
-    const s = clamp(cur().scaleX() * f, tpl.design.minScale, tpl.design.maxScale);
+    const s = clamp(cur().scaleX() * f, zoomMin(), zoomMax());
     applyAll({ scaleX: s, scaleY: s });
   };
   const rotateBy = (deg: number) => applyAll({ rotation: cur().rotation() + deg });
-  const moveBy = (dx: number, dy: number) => applyAll({ x: cur().x() + dx, y: cur().y() + dy });
-
-  designs.forEach((d) => {
-    const sync = () => designs.forEach((o) => o !== d && o.setAttrs({ x: d.x(), y: d.y(), scaleX: d.scaleX(), scaleY: d.scaleY(), rotation: d.rotation() }));
-    d.on('dragmove', sync);
-    d.on('transform', () => {
-      const s = clamp(d.scaleX(), tpl.design.minScale, tpl.design.maxScale);
-      d.scale({ x: s, y: s });
-      sync();
-    });
-    d.on('dragend transformend', () => changed());
-  });
+  // Steps are in face px, so scale them with the product's design scale for a similar on-screen distance.
+  const moveBy = (dx: number, dy: number) => applyAll({ x: cur().x() + dx * P.design.scale, y: cur().y() + dy * P.design.scale });
 
   function selectedFaceIndex() {
     const n = tr.nodes()[0];
     return n ? designs.indexOf(n as Konva.Group) : -1;
   }
   function select(i: number) {
-    tr.nodes(i >= 0 && faces[i].face.visible() ? [designs[i]] : []);
+    tr.nodes(i >= 0 && faces[i]?.face.visible() ? [designs[i]] : []);
+    printArea.visible(P.mockup === 'tshirt' && tr.nodes().length > 0);
   }
   const lastVisible = () => faces.map((f) => f.face.visible()).lastIndexOf(true);
   const openUpload = () => root.querySelector<HTMLInputElement>('input[type=file][data-photo]')?.click();
@@ -280,7 +362,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   stage.on('click tap', (e) => {
     const design = e.target.findAncestor('.design', true) as Konva.Group | undefined;
     if (!design) {
-      tr.nodes([]);
+      select(-1);
       return;
     }
     select(designs.indexOf(design));
@@ -358,7 +440,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
           state.mirror = false;
           mirrorBtn.classList.remove('is-active');
           designs.forEach(buildDesign);
-          return applyAll(designDefaults());
+          return applyAll(toAttrs(defaultTransform()));
       }
     }),
   );
@@ -366,41 +448,60 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   // ---------- mockup layout ----------
   function layout() {
     const cw = stageEl.clientWidth;
-    if (!cw) return; // hidden (3D tab active)
-    const single = cw < 520 || tpl.sides === 1;
-    const n = single ? 1 : tpl.sides;
-    const ch = Math.round(cw * (single ? 0.95 : 0.5));
+    if (!cw) return; // hidden (3D view active)
+    const single = cw < 520;
+    const ch = Math.round(cw * (single ? 0.95 : 0.6));
     stage.size({ width: cw, height: ch });
     mugLayer.destroyChildren();
     shadeLayer.destroyChildren();
+    const shirtHex = P.colors?.find((c) => c.id === state.shirtColor)?.hex ?? '#ffffff';
 
-    const slotW = cw / n;
-    // 0.76 of the slot is the most that fits incl. the handle; height-limited on very wide stages.
-    const bw = Math.min(slotW * 0.76, ch * 0.82);
-    const s = bw / FW;
-    const ry = bw * 0.07; // perspective: how much of the rim ellipse we see
-    sag = ry / s;
-    const faceH = FH * s;
-    const gapTop = bw * 0.03;
-    const gapBottom = bw * 0.09;
-    const mugH = 2 * ry + gapTop + faceH + gapBottom;
-    const top = (ch - mugH) / 2 + ry;
-
-    faces.forEach((f, i) => {
-      const slot = single ? (i === faces.length - 1 ? 0 : -1) : i;
-      f.face.scale({ x: s, y: s });
-      if (slot < 0) {
-        f.face.visible(false);
-        return;
-      }
-      f.face.visible(true);
-      const handleLeft = !single && i === 0;
-      const cx = slotW * (slot + 0.5) + (handleLeft ? 1 : -1) * bw * 0.07;
-      const x0 = cx - bw / 2;
-      const faceY = top + gapTop; // print edges sit just under the rim; the centre sags with the rim
-      drawMug(mugLayer, shadeLayer, { x0, bw, top, bottom: faceY + faceH + gapBottom, ry, handleLeft });
-      f.face.position({ x: x0, y: faceY });
-    });
+    if (P.mockup === 'mug') {
+      const n = single ? 1 : P.sides;
+      const slotW = cw / n;
+      // 0.76 of the slot is the most that fits incl. the handle; height-limited on very wide stages.
+      const bw = Math.min(slotW * 0.76, ch * 0.82);
+      const s = bw / FW;
+      const ry = bw * 0.07; // perspective: how much of the rim ellipse we see
+      sag = ry / s;
+      const faceH = FH * s;
+      const gapTop = bw * 0.03;
+      const gapBottom = bw * 0.09;
+      const mugH = 2 * ry + gapTop + faceH + gapBottom;
+      const top = (ch - mugH) / 2 + ry;
+      faces.forEach((f, i) => {
+        const slot = single ? (i === faces.length - 1 ? 0 : -1) : i;
+        f.face.scale({ x: s, y: s });
+        if (slot < 0) {
+          f.face.visible(false);
+          return;
+        }
+        f.face.visible(true);
+        const handleLeft = !single && i === 0;
+        const cx = slotW * (slot + 0.5) + (handleLeft ? 1 : -1) * bw * 0.07;
+        const x0 = cx - bw / 2;
+        const faceY = top + gapTop; // print edges sit just under the rim; the centre sags with the rim
+        drawMug(mugLayer, shadeLayer, { x0, bw, top, bottom: faceY + faceH + gapBottom, ry, handleLeft });
+        f.face.position({ x: x0, y: faceY });
+      });
+    } else if (P.mockup === 'pillow') {
+      const size = Math.min(cw * 0.66, ch * 0.84);
+      const x0 = (cw - size) / 2;
+      const y0 = (ch - size * 1.06) / 2;
+      drawPillow(mugLayer, shadeLayer, { x0, y0, size });
+      faces[0].face.setAttrs({ x: x0, y: y0, scaleX: size / FW, scaleY: size / FW, visible: true });
+    } else {
+      const w = Math.min(cw * 0.8, (ch * 0.94) / TEE_HEIGHT);
+      const x0 = (cw - w) / 2;
+      const y0 = (ch - w * TEE_HEIGHT) / 2 + w * 0.01;
+      drawTshirt(mugLayer, shadeLayer, { x0, y0, w, color: shirtHex });
+      const s = (TEE_PRINT.w * w) / FW;
+      const fx = x0 + TEE_PRINT.x * w;
+      const fy = y0 + TEE_PRINT.y * w;
+      faces[0].face.setAttrs({ x: fx, y: fy, scaleX: s, scaleY: s, visible: true });
+      const dark = parseInt(shirtHex.slice(1), 16) < 0x808080;
+      printArea.setAttrs({ x: fx, y: fy, width: FW * s, height: FH * s, stroke: dark ? 'rgba(255,255,255,0.55)' : 'rgba(40,30,20,0.35)' });
+    }
     if (selectedFaceIndex() >= 0 && !faces[selectedFaceIndex()].face.visible()) select(lastVisible());
     tr.forceUpdate();
     stage.batchDraw();
@@ -410,7 +511,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   // ---------- export ----------
   function renderPrint(ratio = 1): HTMLCanvasElement {
     const out = document.createElement('canvas');
-    out.width = Math.round(tpl.print.width * ratio);
+    out.width = Math.round(P.print.width * ratio);
     out.height = Math.round(FH * ratio);
     const ctx = out.getContext('2d')!;
     exporting = true;
@@ -429,37 +530,59 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     return out;
   }
 
-  const mug3d = createMugPreview($('.pc-mug3d'), tpl.mug, {
-    width: tpl.print.width / tpl.print.dpi,
-    height: tpl.print.height / tpl.print.dpi,
-  });
-  let mug3dVisible = false;
+  // 3D view (mug only), created on first use
+  const view3dBtn = $<HTMLButtonElement>('.pc-view3d');
+  let mug3d: MugPreview | undefined;
+  let show3d = false;
   let mugTimer = 0;
+  function toggle3d(on: boolean) {
+    show3d = on;
+    view3dBtn.classList.toggle('is-active', on);
+    view3dBtn.setAttribute('aria-pressed', String(on));
+    $<HTMLElement>('[data-panel=edit]').hidden = on;
+    $<HTMLElement>('[data-panel="3d"]').hidden = !on;
+    if (on && P.mug3d) {
+      mug3d ??= createMugPreview($('.pc-mug3d'), P.mug3d, { width: P.print.width / P.print.dpi, height: P.print.height / P.print.dpi });
+      mug3d.update(renderPrint(0.9));
+      mug3d.show();
+    } else {
+      mug3d?.hide();
+      layout();
+    }
+  }
+  view3dBtn.addEventListener('click', () => toggle3d(!show3d));
+
   function changed() {
     faceLayer.batchDraw();
-    if (!mug3dVisible) return;
+    if (!show3d || !mug3d) return;
     clearTimeout(mugTimer);
-    mugTimer = window.setTimeout(() => mug3d.update(renderPrint(0.9)), 200);
+    mugTimer = window.setTimeout(() => mug3d!.update(renderPrint(0.9)), 200);
   }
 
   async function exportPersonalization(): Promise<Personalization> {
     await document.fonts.ready;
     const print = renderPrint(1);
     const printBlob = await new Promise<Blob>((res) => print.toBlob((b) => res(b!), 'image/png'));
+    const shirt = P.colors?.find((c) => c.id === state.shirtColor);
     const prev = document.createElement('canvas');
     prev.width = 800;
     prev.height = Math.round((800 * print.height) / print.width);
-    prev.getContext('2d')!.drawImage(print, 0, 0, prev.width, prev.height);
+    const pctx = prev.getContext('2d')!;
+    pctx.fillStyle = shirt?.hex ?? '#ffffff'; // transparent prints (t-shirt) previewed on the shirt colour
+    pctx.fillRect(0, 0, prev.width, prev.height);
+    pctx.drawImage(print, 0, 0, prev.width, prev.height);
     const options: Record<string, string> = {
+      Product: P.label,
       'Pet name': state.name,
       Style: tpl.styles.find((s) => s.id === state.style)!.label,
-      Background: tpl.backgrounds.find((b) => b.id === state.background)!.label,
+      ...(P.background ? { Background: tpl.backgrounds.find((b) => b.id === state.background)!.label } : {}),
+      ...(shirt ? { 'Shirt color': shirt.label } : {}),
       Greeting: state.greeting,
       Font: state.font,
       'Text color': state.textColor,
       Mirrored: state.mirror ? 'Yes' : 'No',
     };
-    return { templateId: tpl.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
+    return { templateId: tpl.id, productId: P.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
   }
 
   // ---------- panel ----------
@@ -509,11 +632,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   function syncPanel() {
     root.querySelectorAll<HTMLButtonElement>('[data-field=background] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.background));
     root.querySelectorAll<HTMLButtonElement>('[data-field=textColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.textColor));
+    root.querySelectorAll<HTMLButtonElement>('[data-field=shirtColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.shirtColor));
     $<HTMLSelectElement>('[data-field=font]').value = state.font;
   }
 
   $('[data-field=background]').innerHTML = tpl.backgrounds
-    .map((b) => `<button type="button" data-v="${b.id}" title="${b.label}"><img src="${b.src}" alt=""><span>${b.label}</span></button>`)
+    .map((b) => `<button type="button" data-v="${b.id}" title="${b.label}"><img src="${b.render(240, 200, 0.22)}" alt=""><span>${b.label}</span></button>`)
+    .join('');
+  $('[data-field=shirtColor]').innerHTML = (tshirt?.colors ?? [])
+    .map((c) => `<button type="button" data-v="${c.id}" style="--c:${c.hex}" aria-label="${c.label}" title="${c.label}"></button>`)
     .join('');
   $<HTMLSelectElement>('[data-field=font]').innerHTML = tpl.fonts.map((f) => `<option value="${f}">${f}</option>`).join('');
   $('[data-field=textColor]').innerHTML = tpl.textColors
@@ -522,15 +649,29 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   $<HTMLInputElement>('[data-field=greeting]').value = state.greeting;
 
   const pick = (e: Event) => (e.target as HTMLElement).closest('button')?.dataset.v;
+  root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.dataset.product === state.product) return;
+      state.product = b.dataset.product!;
+      setupProduct();
+    }),
+  );
   $('[data-field=background]').addEventListener('click', (e) => {
     const v = pick(e);
     if (!v) return;
     state.background = v;
     state.textColor = tpl.backgrounds.find((b) => b.id === v)!.textColor;
-    applyBackground();
+    void applyBackground();
     applyText();
     syncPanel();
     rebuildDesigns();
+  });
+  $('[data-field=shirtColor]').addEventListener('click', (e) => {
+    const v = pick(e);
+    if (!v) return;
+    state.shirtColor = v;
+    syncPanel();
+    layout();
   });
   $('[data-field=textColor]').addEventListener('click', (e) => {
     const v = pick(e);
@@ -630,22 +771,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     if (state.style !== style && !own() && !state.error) void paint(state.style);
   }
 
-  // Tabs
-  root.querySelectorAll<HTMLButtonElement>('.pc-tab').forEach((tab) =>
-    tab.addEventListener('click', () => {
-      root.querySelectorAll('.pc-tab').forEach((t) => t.classList.toggle('is-active', t === tab));
-      root.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== tab.dataset.view));
-      mug3dVisible = tab.dataset.view === '3d';
-      if (mug3dVisible) {
-        mug3d.update(renderPrint(0.9));
-        mug3d.show();
-      } else {
-        mug3d.hide();
-        layout();
-      }
-    }),
-  );
-
   // Actions (only with the customer's own illustration, never the example)
   function readyForExport() {
     if (own()) return true;
@@ -657,7 +782,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const p = await exportPersonalization();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(p.printBlob);
-    a.download = `${tpl.id}-print-${tpl.print.width}x${tpl.print.height}.png`;
+    a.download = `${tpl.id}-${P.id}-print-${P.print.width}x${P.print.height}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   });
@@ -670,12 +795,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
 
   // ---------- initial render ----------
   await Promise.all(tpl.fonts.map((f) => document.fonts.load(`80px "${f}"`).catch(() => undefined)));
-  applyBackground();
-  applyText();
   syncPanel();
-  layout();
-  renderAll();
-  select(lastVisible());
+  renderPetPanel();
+  renderStyles();
+  setupProduct();
 
   return { exportPersonalization };
 }

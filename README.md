@@ -1,4 +1,4 @@
-# Pet mug customizer (demo)
+# Pet gift customizer (demo)
 
 Teeinblue-style product personalizer. Runs entirely in the browser, so it costs $0 per customer.
 
@@ -22,11 +22,24 @@ npm run build    # static files in dist/ → deploy to Cloudflare Pages / Vercel
 | `src/assets.ts` | Background patterns generated as SVG. |
 | `src/petPhoto.ts` | Photo downscale for upload; in-browser background removal (`@imgly/background-removal`) + trim. |
 | `src/ai.ts` | Client for the AI worker. |
-| `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet. The print has `sides` faces (2 on a mug) with the same design on each; the design (pet + name) is one unit edited directly on the mug mockup: drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror, start over. |
+| `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; the design (pet + name) is one unit edited directly on the product mockup: drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror, start over. |
 | `src/mugMockup.ts` | 2D ceramic mug drawn with Konva shapes. |
+| `src/mockups.ts` | 2D pillow and t-shirt mockups (Konva shapes). |
 | `src/mug3d.ts` | Three.js mug; the print canvas is wrapped around it as a texture. |
 
-Output: a 2475×1050 px (8.25"×3.5" @ 300 DPI) PNG print file, an 800 px JPEG preview and an options object.
+## Products
+
+The same illustration, name and text appear on every product; switching products never calls the AI again.
+Each product has its own print file, mockup and design position (`template.products`):
+
+| Product | Print file | Notes |
+|---|---|---|
+| Mug | 2475×1050 px (8.25"×3.5" @ 300 DPI) | 2 sides with the same design, background pattern, 3D view |
+| Pillow | 2700×2700 px (18"×18" @ 150 DPI) | background pattern |
+| T-shirt | 1800×2400 px (12"×16" @ 150 DPI) | transparent PNG, shirt colour choice, dashed print area while editing |
+
+The AI illustration is 1K, so higher DPI on fabric would not add detail. Output per product: print PNG,
+800 px JPEG preview and an options object (product, style, background or shirt colour, texts…).
 Export is only possible with the customer's own illustration (never the example).
 
 ## AI illustration (Nano Banana)

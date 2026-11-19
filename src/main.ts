@@ -1,6 +1,6 @@
 import './style.css';
 import { mountCustomizer, type Personalization } from './customizer';
-import { christmasPetMug } from './template';
+import { christmasPet } from './template';
 
 const dialog = document.querySelector<HTMLDialogElement>('#cart-dialog')!;
 
@@ -18,4 +18,4 @@ function showCart(p: Personalization) {
   dialog.showModal();
 }
 
-mountCustomizer(document.querySelector('#customizer')!, christmasPetMug, { onAddToCart: showCart });
+mountCustomizer(document.querySelector('#customizer')!, christmasPet, { onAddToCart: showCart });

@@ -32,7 +32,7 @@ function dots(w: number, h: number, n: number, colors: string[], seed: number, m
   const r = rng(seed);
   let out = '';
   for (let i = 0; i < n; i++) {
-    out += `<circle cx="${(r() * w).toFixed(0)}" cy="${(r() * h).toFixed(0)}" r="${(2 + r() * maxR).toFixed(1)}" fill="${colors[i % colors.length]}" opacity="${(0.5 + r() * 0.4).toFixed(2)}"/>`;
+    out += `<circle cx="${(r() * w).toFixed(0)}" cy="${(r() * h).toFixed(0)}" r="${((2 * maxR) / 5 + r() * maxR).toFixed(1)}" fill="${colors[i % colors.length]}" opacity="${(0.5 + r() * 0.4).toFixed(2)}"/>`;
   }
   return out;
 }
@@ -42,8 +42,10 @@ function tree(x: number, y: number, h: number, color: string) {
   return `<polygon points="${x},${y - h} ${x - w / 2},${y} ${x + w / 2},${y}" fill="${color}"/><rect x="${x - h * 0.05}" y="${y}" width="${h * 0.1}" height="${h * 0.15}" fill="#c9ad94"/>`;
 }
 
-/** Scatter n items over the canvas, avoiding a too-regular look via jittered grid. */
-function scatter(w: number, h: number, cols: number, rows: number, seed: number, draw: (x: number, y: number, i: number, r: () => number) => string) {
+/** Scatter about n items over the canvas on a jittered grid that follows the canvas' aspect ratio. */
+function scatter(w: number, h: number, n: number, seed: number, draw: (x: number, y: number, i: number, r: () => number) => string) {
+  const cols = Math.max(1, Math.round(Math.sqrt((n * w) / h)));
+  const rows = Math.max(1, Math.round(n / cols));
   const r = rng(seed);
   let out = '';
   let i = 0;
@@ -57,34 +59,31 @@ function scatter(w: number, h: number, cols: number, rows: number, seed: number,
   return out;
 }
 
-export function backgroundStars(w: number, h: number) {
+// Background patterns. `u` = size unit: 1 on the mug (300 DPI), larger on products whose design is scaled up,
+// so the pattern keeps the same look relative to the design. Counts scale with area so density stays constant.
+type Bg = (w: number, h: number, u?: number) => string;
+const count = (w: number, h: number, u: number, perMug: number) => Math.round((perMug * (w * h)) / (2475 * 1050 * u * u));
+const svg = (w: number, h: number, body: string) =>
+  svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`);
+
+export const backgroundStars: Bg = (w, h, u = 1) => {
   const colors = ['#d99a9a', '#9dbfa6', '#dcc38a', '#a9bfd6'];
-  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<rect width="${w}" height="${h}" fill="#fcfaf6"/>
-${dots(w, h, 120, ['#c9c2b8', '#e2b4b4', '#b8cfbe'], 4, 3)}
-${scatter(w, h, 12, 5, 9, (x, y, i, r) => star(x, y, 14 + r() * 12, colors[i % colors.length], r() * 60))}
-</svg>`);
-}
+  return svg(w, h, `<rect width="${w}" height="${h}" fill="#fcfaf6"/>
+${dots(w, h, count(w, h, u, 120), ['#c9c2b8', '#e2b4b4', '#b8cfbe'], 4, 3 * u)}
+${scatter(w, h, count(w, h, u, 60), 9, (x, y, i, r) => star(x, y, (14 + r() * 12) * u, colors[i % colors.length], r() * 60))}`);
+};
 
-export function backgroundSnow(w: number, h: number) {
-  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<rect width="${w}" height="${h}" fill="#f1f6f9"/>
-${dots(w, h, 140, ['#ffffff', '#d6e4ee'], 12, 5)}
-${scatter(w, h, 10, 4, 21, (x, y, _i, r) => crystal(x, y, 16 + r() * 16, '#b7cfe0'))}
-</svg>`);
-}
+export const backgroundSnow: Bg = (w, h, u = 1) =>
+  svg(w, h, `<rect width="${w}" height="${h}" fill="#f1f6f9"/>
+${dots(w, h, count(w, h, u, 140), ['#ffffff', '#d6e4ee'], 12, 5 * u)}
+${scatter(w, h, count(w, h, u, 40), 21, (x, y, _i, r) => crystal(x, y, (16 + r() * 16) * u, '#b7cfe0'))}`);
 
-export function backgroundBlush(w: number, h: number) {
-  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<rect width="${w}" height="${h}" fill="#faefec"/>
-${dots(w, h, 110, ['#ffffff', '#efd3cd'], 33, 4)}
-${scatter(w, h, 9, 3, 41, (x, y, i, r) => (i % 3 === 0 ? tree(x, y, 40 + r() * 20, '#a9c4ae') : star(x, y, 12 + r() * 8, '#e0b98a', r() * 60)))}
-</svg>`);
-}
+export const backgroundBlush: Bg = (w, h, u = 1) =>
+  svg(w, h, `<rect width="${w}" height="${h}" fill="#faefec"/>
+${dots(w, h, count(w, h, u, 110), ['#ffffff', '#efd3cd'], 33, 4 * u)}
+${scatter(w, h, count(w, h, u, 27), 41, (x, y, i, r) => (i % 3 === 0 ? tree(x, y, (40 + r() * 20) * u, '#a9c4ae') : star(x, y, (12 + r() * 8) * u, '#e0b98a', r() * 60)))}`);
 
-export function backgroundPlain(w: number, h: number) {
-  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#ffffff"/></svg>`);
-}
+export const backgroundPlain: Bg = (w, h) => svg(w, h, `<rect width="${w}" height="${h}" fill="#ffffff"/>`);
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
