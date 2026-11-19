@@ -2,7 +2,7 @@ name = "pet-mug-ai"
 main = "src/index.ts"
 compatibility_date = "2025-06-01"
 
-# KV namespace for the daily counters. Create it with:
+# KV namespace for the daily counters and the 7-day illustration cache. Create it with:
 #   npx wrangler kv namespace create LIMITS
 # and paste the printed id below.
 [[kv_namespaces]]
@@ -20,4 +20,6 @@ PER_IP_DAILY = "10"
 GLOBAL_DAILY = "200"
 MOCK = "0"
 
-# Secret (never in this file):  npx wrangler secret put GEMINI_API_KEY
+# Secrets (never in this file):
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put TURNSTILE_SECRET   (Turnstile widget secret; unset = bot check off)

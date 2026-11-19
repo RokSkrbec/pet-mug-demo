@@ -7,6 +7,8 @@
 //      * per-visitor daily limit (by IP)          -> PER_IP_DAILY
 //      * global daily limit across all visitors   -> GLOBAL_DAILY (hard budget cap)
 //      * input size/type validation, output fixed at 1K
+//      * Cloudflare Turnstile bot check on every request (when TURNSTILE_SECRET is set)
+//  - caches results in KV (photo + exact prompt → illustration, 7 days): a repeat costs nothing and no try
 //  - prompts live HERE, the browser only sends an accessory id, so the endpoint
 //    can't be abused as a general-purpose image generator.
 
@@ -21,6 +23,29 @@ export interface Env {
   GLOBAL_DAILY: string;
   /** "1" = don't call Google, return the input image (for testing without a key / without cost). */
   MOCK?: string;
+  /** Turnstile secret key. Unset = bot check off (local dev). */
+  TURNSTILE_SECRET?: string;
+}
+
+const CACHE_TTL = 60 * 60 * 24 * 7;
+
+async function sha256(text: string) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Cloudflare Turnstile: the browser solved an (invisible) challenge and sent us a one-time token. */
+async function humanCheck(env: Env, token: unknown, ip: string) {
+  if (!env.TURNSTILE_SECRET) return true;
+  if (typeof token !== 'string' || !token) return false;
+  const form = new FormData();
+  form.append('secret', env.TURNSTILE_SECRET);
+  form.append('response', token);
+  form.append('remoteip', ip);
+  const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: form });
+  const out = await res.json<{ success: boolean; 'error-codes'?: string[] }>().catch(() => null);
+  if (!out?.success) console.warn('Turnstile failed', JSON.stringify(out));
+  return !!out?.success;
 }
 
 const STYLE =
@@ -142,7 +167,7 @@ async function callOnce(env: Env, model: string, prompt: string, image: string, 
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = req.headers.get('Origin');
     const cors = corsHeaders(origin, env);
     const url = new URL(req.url);
@@ -152,25 +177,38 @@ export default {
     if (!cors['Access-Control-Allow-Origin']) return json({ error: 'origin_not_allowed' }, 403, cors);
 
     // ---- validate input ----
-    let payload: { accessory?: string; image?: string; mime?: string };
+    let payload: { accessory?: string; image?: string; mime?: string; token?: string; fresh?: boolean };
     try {
       payload = await req.json();
     } catch {
       return json({ error: 'bad_json' }, 400, cors);
     }
-    const { accessory = 'none', image, mime = 'image/jpeg' } = payload;
+    const { accessory = 'none', image, mime = 'image/jpeg', token, fresh = false } = payload;
     if (!(accessory in ACCESSORIES)) return json({ error: 'bad_accessory' }, 400, cors);
     if (!MIME_OK.has(mime)) return json({ error: 'bad_mime' }, 400, cors);
     if (typeof image !== 'string' || !image.length || (image.length * 3) / 4 > MAX_IMAGE_BYTES) return json({ error: 'bad_image' }, 400, cors);
 
+    // ---- bot check ----
+    const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
+    if (!(await humanCheck(env, token, ip))) return json({ error: 'bot_check' }, 403, cors);
+
     // ---- limits (KV counters, reset daily at 00:00 UTC) ----
     const day = new Date().toISOString().slice(0, 10);
-    const ip = req.headers.get('CF-Connecting-IP') ?? 'unknown';
     const ipKey = `ip:${day}:${ip}`;
     const globalKey = `global:${day}`;
     const perIp = Number(env.PER_IP_DAILY);
     const global = Number(env.GLOBAL_DAILY);
     const [ipCount, globalCount] = await Promise.all([env.LIMITS.get(ipKey), env.LIMITS.get(globalKey)]).then((v) => v.map((x) => Number(x ?? 0)));
+
+    // ---- cache: same photo + same prompt = same request. Free, and doesn't use a try. ----
+    // "Paint again" sends fresh=true: skip the lookup (they want a new picture), but store the new result.
+    const prompt = `${STYLE} ${ACCESSORIES[accessory]}`.trim();
+    const cacheKey = `img:${env.MOCK === '1' ? 'mock:' : ''}${await sha256(`${prompt}\n${mime}\n${image}`)}`;
+    if (!fresh) {
+      const hit = await env.LIMITS.get<{ image: string; mime: string }>(cacheKey, 'json');
+      if (hit) return json({ ...hit, remaining: Math.max(0, perIp - ipCount), cached: true }, 200, cors);
+    }
+
     if (ipCount >= perIp) return json({ error: 'daily_limit', remaining: 0 }, 429, cors);
     if (globalCount >= global) return json({ error: 'busy' }, 429, cors);
     // Count the attempt up-front (a failed upstream call still costs a try; keeps abuse bounded).
@@ -180,13 +218,15 @@ export default {
 
     // ---- generate ----
     try {
+      let out: { data: string; mime: string };
       if (env.MOCK === '1') {
         await new Promise((r) => setTimeout(r, 1200));
-        return json({ image, mime, remaining, mock: true }, 200, cors);
+        out = { data: image, mime };
+      } else {
+        if (!env.GEMINI_API_KEY) return json({ error: 'not_configured' }, 500, cors);
+        out = await callNanoBanana(env, prompt, image, mime);
       }
-      if (!env.GEMINI_API_KEY) return json({ error: 'not_configured' }, 500, cors);
-      const prompt = `${STYLE} ${ACCESSORIES[accessory]}`.trim();
-      const out = await callNanoBanana(env, prompt, image, mime);
+      ctx.waitUntil(env.LIMITS.put(cacheKey, JSON.stringify({ image: out.data, mime: out.mime }), { expirationTtl: CACHE_TTL }));
       return json({ image: out.data, mime: out.mime, remaining }, 200, cors);
     } catch (err) {
       // Google was overloaded: give the try back so the customer isn't charged for it.

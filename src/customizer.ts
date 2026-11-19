@@ -17,6 +17,7 @@ import { loadImage } from './assets';
 import { cutout } from './petPhoto';
 import { Compositor, flatRect, loadMockup, type LoadedMockup, type View } from './photoMockup';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
+import { preloadTurnstile } from './turnstile';
 
 export interface Personalization {
   templateId: string;
@@ -118,7 +119,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     </div>
     <form class="pc-panel" autocomplete="off">
       <fieldset><legend>Your pet</legend><div class="pc-pet"></div></fieldset>
-      <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div></fieldset>
+      <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div><div class="pc-botcheck"></div></fieldset>
       <fieldset data-section="background"><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
       <fieldset data-section="shirt" hidden><legend>Shirt color</legend><div class="pc-colors pc-shirt-colors" data-field="shirtColor"></div></fieldset>
       <fieldset><legend>Text</legend>
@@ -775,8 +776,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     try {
       let image: Blob = state.photo;
       if (aiEnabled) {
-        const { blob, remaining } = await illustrate(state.photo, style);
-        state.triesLeft = Math.min(state.triesLeft - 1, remaining);
+        // Already painted = "Paint again": ask for a new picture, not the cached one.
+        const fresh = !!state.illustrations[style];
+        const { blob, remaining, cached } = await illustrate(state.photo, style, { fresh, botCheck: $('.pc-botcheck') });
+        state.triesLeft = Math.min(state.triesLeft - (cached ? 0 : 1), remaining);
         image = blob;
       }
       const { canvas } = await cutout(image);
@@ -785,7 +788,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     } catch (err) {
       console.error(err);
       // Overload/network problems don't cost the customer a try.
-      if (err instanceof AiError && !['network', 'timeout', 'upstream_busy'].includes(err.code)) state.triesLeft--;
+      if (err instanceof AiError && !['network', 'timeout', 'upstream_busy', 'bot_check'].includes(err.code)) state.triesLeft--;
       if (err instanceof AiError && err.remaining !== undefined) state.triesLeft = Math.min(state.triesLeft, err.remaining);
       state.triesLeft = Math.max(0, state.triesLeft);
       state.error = aiErrorMessage(err);
@@ -827,6 +830,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   renderStyles();
   setupProduct();
   tpl.products.forEach((p) => void mockupFor(p)); // warm the other product photos
+  if (aiEnabled) void preloadTurnstile();
 
   return { exportPersonalization };
 }

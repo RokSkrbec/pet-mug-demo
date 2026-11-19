@@ -66,11 +66,15 @@ through a tiny Cloudflare Worker in [`worker/`](worker/) that holds the key and 
 | Per visitor (IP) per day | worker, KV counter | 10 (`PER_IP_DAILY`) |
 | All visitors per day (budget cap) | worker, KV counter | 200 (`GLOBAL_DAILY`) |
 | Allowed websites | worker, CORS | `ALLOWED_ORIGINS` |
+| Bot check on every request (Cloudflare Turnstile, invisible for almost everyone) | browser + worker | on when `TURNSTILE_SECRET` is set |
+| Result cache: same photo + same prompt → stored illustration, free and no try used ("Paint again" skips it) | worker, KV, 7 days | – |
 | Fixed prompts (browser only sends an accessory id), input ≤ 2.5 MB, output 1K | worker | – |
 
 Counters reset at 00:00 UTC. KV is eventually consistent, so limits are approximate (fine as a budget guard).
 
 **Local test without a key:** `cd worker && npm run dev -- --var MOCK:1` (returns the input image, costs nothing).
+Local dev uses Cloudflare's public Turnstile test site key (`.env.development`); add
+`--var TURNSTILE_SECRET:1x0000000000000000000000000000000AA` (always passes) to test the bot check locally.
 **Local test with a key:** put `GEMINI_API_KEY=...` in `worker/.dev.vars` (git-ignored), then `npm run dev`.
 
 **Deploy:**
@@ -83,6 +87,13 @@ npx wrangler deploy                      # prints https://pet-mug-ai.<subdomain>
 gh variable set AI_ENDPOINT --body "https://pet-mug-ai.<subdomain>.workers.dev"
 ```
 Then push to `main` (or re-run the Pages workflow) so the site is rebuilt with the AI button.
+
+**Turnstile (bot check):** Cloudflare dashboard → Turnstile → Add widget (hostname of the site, mode *Managed*).
+Set the site key first, then the secret (the other order would reject visitors until the site is rebuilt):
+```bash
+gh variable set TURNSTILE_SITEKEY --body "<site key>"   # then re-run the Pages workflow
+cd worker && npx wrangler secret put TURNSTILE_SECRET    # paste the secret key when prompted
+```
 
 ## Shopify custom app (next phase)
 

@@ -113,6 +113,7 @@ dialog pre { background: #2f2c2a; color: #f3ede6; padding: 14px; border-radius: 
 .pc-ai-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .pc-ai-toggle button { font: inherit; padding: 8px; border: 1px solid var(--line); background: #fff; border-radius: 10px; cursor: pointer; color: var(--ink); }
 .pc-ai-toggle button.is-active { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.pc-botcheck:not(:empty) { margin-top: 10px; }
 .pc-ai-note { margin: 0; font-size: 13px; color: var(--muted); }
 .pc-ai-msg { margin: 0; font-size: 13px; color: #a8646c; }
 

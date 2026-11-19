@@ -28,6 +28,8 @@ jobs:
         env:
           # Repo variable (Settings → Secrets and variables → Actions → Variables). Empty = AI button hidden.
           VITE_AI_ENDPOINT: ${{ vars.AI_ENDPOINT }}
+          # Cloudflare Turnstile site key (public). Empty = no bot check.
+          VITE_TURNSTILE_SITEKEY: ${{ vars.TURNSTILE_SITEKEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
