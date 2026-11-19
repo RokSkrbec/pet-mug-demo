@@ -567,7 +567,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       <label class="pc-upload ${state.busy ? 'processing' : state.photo ? 'ready' : ''}">
         <input type="file" accept="image/*" data-photo hidden ${state.busy ? 'disabled' : ''}>
         ${state.photoThumb ? `<img src="${state.photoThumb}" alt="">` : '<span class="pc-upload-icon">＋</span>'}
-        <span class="pc-upload-text">${esc(text)}</span>
+        <span class="pc-upload-body">
+          <span class="pc-upload-text">${esc(text)}</span>
+          ${state.busy ? '' : '<small class="pc-upload-tip">Tip: a sharp photo showing your whole pet works best. Ears, paws or tail cut off in the photo stay cut off.</small>'}
+        </span>
       </label>
       <input type="text" class="pc-input" data-field="name" maxlength="14" placeholder="Pet name" value="${esc(state.name)}">`;
   }
