@@ -1,0 +1,23 @@
+name = "pet-mug-ai"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# KV namespace for the daily counters. Create it with:
+#   npx wrangler kv namespace create LIMITS
+# and paste the printed id below.
+[[kv_namespaces]]
+binding = "LIMITS"
+id = "830c578e1c704408a440bcb3cd0956da"
+
+[vars]
+GEMINI_MODEL = "gemini-nano-banana-2.1"
+# Used automatically when the main model is overloaded (Google 503/429).
+GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-image"
+# Websites allowed to call this worker. "http://localhost:*" = any local port.
+ALLOWED_ORIGINS = "https://rokskrbec.github.io,http://localhost:*"
+# Generations per visitor (IP) per day, and across ALL visitors per day (budget cap).
+PER_IP_DAILY = "10"
+GLOBAL_DAILY = "200"
+MOCK = "0"
+
+# Secret (never in this file):  npx wrangler secret put GEMINI_API_KEY

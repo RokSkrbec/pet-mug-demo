@@ -28,6 +28,8 @@ export interface Template {
   /** Fixed greeting text (not movable), face px. */
   greeting: { default: string; x: number; y: number; fontSize: number };
   petName: { fontSize: number; gap: number };
+  /** AI illustration: tries per uploaded pet photo (the worker also enforces per-visitor/day limits). */
+  ai: { triesPerPet: number };
 }
 
 const W = 2475;
@@ -71,4 +73,5 @@ export const christmasPetMug: Template = {
   accessoryArt: { hat: santaHat, scarf, lights },
   greeting: { default: 'Vesel božič', x: FW / 2, y: 105, fontSize: 130 },
   petName: { fontSize: 96, gap: 0 },
+  ai: { triesPerPet: 3 },
 };

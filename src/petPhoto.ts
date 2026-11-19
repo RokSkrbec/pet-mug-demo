@@ -16,6 +16,8 @@ export interface PetFit {
 
 export interface ProcessedPet {
   canvas: HTMLCanvasElement;
+  /** Unfiltered cut-out (before the pastel filter), used as input for the AI illustration. */
+  raw: HTMLCanvasElement;
   fit: PetFit;
   backgroundRemoved: boolean;
 }
@@ -154,7 +156,7 @@ export function soften(canvas: HTMLCanvasElement) {
 }
 
 export async function processPetPhoto(
-  file: File,
+  file: Blob,
   onProgress: (msg: string) => void,
   opts: { soft?: boolean } = {},
 ): Promise<ProcessedPet> {
@@ -181,6 +183,10 @@ export async function processPetPhoto(
   const bmp = await createImageBitmap(cutout);
   const canvas = trim(bmp, bmp.width, bmp.height);
   bmp.close();
+  const raw = document.createElement('canvas');
+  raw.width = canvas.width;
+  raw.height = canvas.height;
+  raw.getContext('2d')!.drawImage(canvas, 0, 0);
   if (opts.soft) soften(canvas);
-  return { canvas, fit: analyse(canvas), backgroundRemoved };
+  return { canvas, raw, fit: analyse(canvas), backgroundRemoved };
 }

@@ -92,3 +92,21 @@ dialog::backdrop { background: rgba(40,30,20,.4); }
 dialog h2 { margin-top: 0; }
 dialog img { width: 100%; border-radius: 8px; border: 1px solid var(--line); }
 dialog pre { background: #2f2c2a; color: #f3ede6; padding: 14px; border-radius: 10px; overflow: auto; font-size: 13px; max-height: 280px; }
+
+/* ---- AI illustration ---- */
+.pc-ai { display: flex; flex-direction: column; gap: 8px; }
+.pc-ai-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font: inherit; font-weight: 600; padding: 11px 14px; border-radius: 12px; cursor: pointer;
+  color: #5b3f3c; background: linear-gradient(120deg, #f8e3df, #efe6f5); border: 1px solid #ead2cd;
+}
+.pc-ai-btn small { font-weight: 500; color: var(--muted); }
+.pc-ai-btn:hover:not(:disabled) { filter: brightness(0.98); }
+.pc-ai-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+.pc-ai-btn.is-busy { opacity: 1; }
+.pc-ai-btn.is-busy span::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 2px solid #b98580; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
+.pc-ai-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pc-ai-toggle button { font: inherit; padding: 8px; border: 1px solid var(--line); background: #fff; border-radius: 10px; cursor: pointer; color: var(--ink); }
+.pc-ai-toggle button.is-active { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.pc-ai-note { margin: 0; font-size: 13px; color: var(--muted); }
+.pc-ai-msg { margin: 0; font-size: 13px; color: #a8646c; }

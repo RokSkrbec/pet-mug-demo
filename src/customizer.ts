@@ -10,6 +10,7 @@ import { loadImage } from './assets';
 import { processPetPhoto, type ProcessedPet } from './petPhoto';
 import { createMugPreview } from './mug3d';
 import { drawMug } from './mugMockup';
+import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
 
 export interface Personalization {
   templateId: string;
@@ -30,6 +31,12 @@ interface PetState {
   status: 'empty' | 'processing' | 'ready' | 'error';
   message: string;
   photo?: ProcessedPet;
+  /** AI illustration (accessories are painted in), and the accessory set it was generated with. */
+  ai?: { photo: ProcessedPet; accessory: string };
+  useAi: boolean;
+  aiBusy: boolean;
+  aiMsg: string;
+  aiTriesLeft: number;
 }
 
 const ICONS: Record<string, string> = {
@@ -64,6 +71,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       accessory: tpl.accessoryOptions[1]?.id ?? 'none',
       status: 'empty',
       message: '',
+      useAi: false,
+      aiBusy: false,
+      aiMsg: '',
+      aiTriesLeft: tpl.ai.triesPerPet,
     })),
   };
 
@@ -203,14 +214,17 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const layout = tpl.petLayouts[state.petCount];
     state.pets.slice(0, state.petCount).forEach((pet, i) => {
       const slot = layout[i];
-      if (pet.photo) {
-        const { canvas, fit } = pet.photo;
+      const usingAi = pet.useAi && !!pet.ai;
+      const source = usingAi ? pet.ai!.photo : pet.photo;
+      if (source) {
+        const { canvas, fit } = source;
         const scale = Math.min(slot.h / canvas.height, (slot.h * 1.1) / canvas.width);
         // Mirror flips the pet (and its accessories) around its own centre; text is never mirrored.
         const flip = new Konva.Group({ x: slot.x, y: slot.y, scaleX: state.mirror ? -1 : 1 });
         const inner = new Konva.Group({ scaleX: scale, scaleY: scale, offsetX: canvas.width / 2, offsetY: canvas.height });
         inner.add(new Konva.Image({ image: canvas }));
-        const items = tpl.accessoryOptions.find((a) => a.id === pet.accessory)?.items ?? [];
+        // AI illustrations already have the accessories painted in.
+        const items = usingAi ? [] : (tpl.accessoryOptions.find((a) => a.id === pet.accessory)?.items ?? []);
         const ordered = [...items.filter((k) => k !== 'hat'), ...items.filter((k) => k === 'hat')];
         for (const kind of ordered) inner.add(makeAccessory(kind, fit));
         flip.add(inner);
@@ -492,7 +506,9 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     };
     state.pets.slice(0, state.petCount).forEach((p, i) => {
       options[`Pet ${i + 1} name`] = p.name;
-      options[`Pet ${i + 1} accessories`] = tpl.accessoryOptions.find((a) => a.id === p.accessory)!.label;
+      const acc = p.useAi && p.ai ? p.ai.accessory : p.accessory;
+      options[`Pet ${i + 1} accessories`] = tpl.accessoryOptions.find((a) => a.id === acc)!.label;
+      options[`Pet ${i + 1} style`] = p.useAi && p.ai ? 'AI illustration' : 'Photo';
     });
     return { templateId: tpl.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
   }
@@ -527,9 +543,33 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         <select class="pc-input" data-pet-acc="${i}">
           ${tpl.accessoryOptions.map((a) => `<option value="${a.id}" ${a.id === p.accessory ? 'selected' : ''}>${a.label}</option>`).join('')}
         </select>
+        ${aiBlock(p, i)}
       </fieldset>`,
       )
       .join('');
+  }
+
+  function aiBlock(p: PetState, i: number) {
+    if (!aiEnabled || !p.photo) return '';
+    const label = p.aiBusy ? p.aiMsg || 'Painting…' : p.ai ? 'Paint again' : 'Make illustration';
+    const disabled = p.aiBusy || p.aiTriesLeft <= 0;
+    return `<div class="pc-ai">
+      <button type="button" class="pc-ai-btn ${p.aiBusy ? 'is-busy' : ''}" data-ai-gen="${i}" ${disabled ? 'disabled' : ''}>
+        <span>✨ ${label}</span>${p.aiBusy ? '' : `<small>${p.aiTriesLeft} of ${tpl.ai.triesPerPet} left</small>`}
+      </button>
+      ${p.aiBusy ? '<p class="pc-ai-note">This takes about 10–30 seconds.</p>' : ''}
+      ${
+        p.ai && !p.aiBusy
+          ? `<div class="pc-ai-toggle" role="group" aria-label="Pet ${i + 1} style">
+               <button type="button" data-ai-use="${i}" data-v="1" class="${p.useAi ? 'is-active' : ''}">Illustration</button>
+               <button type="button" data-ai-use="${i}" data-v="0" class="${p.useAi ? '' : 'is-active'}">Photo</button>
+             </div>`
+          : ''
+      }
+      ${p.useAi && p.ai && p.ai.accessory !== p.accessory && !p.aiBusy ? '<p class="pc-ai-note">Accessories changed. Paint again to apply them.</p>' : ''}
+      ${!p.aiBusy && p.aiMsg ? `<p class="pc-ai-msg">${p.aiMsg}</p>` : ''}
+      ${!p.aiBusy && !p.aiMsg && p.aiTriesLeft <= 0 ? '<p class="pc-ai-note">No illustrations left for this photo today.</p>' : ''}
+    </div>`;
   }
 
   function syncPanel() {
@@ -589,6 +629,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const t = e.target as HTMLInputElement;
     if (t.dataset.petAcc !== undefined) {
       state.pets[Number(t.dataset.petAcc)].accessory = t.value;
+      renderPetsPanel();
       rebuildDesigns();
     }
     if (t.dataset.pet !== undefined && t.files?.[0]) await handleUpload(Number(t.dataset.pet), t.files[0]);
@@ -598,6 +639,10 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const pet = state.pets[i];
     pet.status = 'processing';
     pet.message = 'Preparing photo…';
+    pet.ai = undefined;
+    pet.useAi = false;
+    pet.aiMsg = '';
+    pet.aiTriesLeft = tpl.ai.triesPerPet;
     renderPetsPanel();
     const setMsg = (m: string) => {
       pet.message = m;
@@ -616,6 +661,53 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     renderPetsPanel();
     rebuildDesigns();
     select(lastVisible());
+  }
+
+  // ---------- AI illustration ----------
+  petsEl.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    if (b.dataset.aiGen !== undefined) void handleAi(Number(b.dataset.aiGen));
+    if (b.dataset.aiUse !== undefined) {
+      state.pets[Number(b.dataset.aiUse)].useAi = b.dataset.v === '1';
+      renderPetsPanel();
+      rebuildDesigns();
+    }
+  });
+
+  async function handleAi(i: number) {
+    const pet = state.pets[i];
+    if (!pet.photo || pet.aiBusy || pet.aiTriesLeft <= 0) return;
+    pet.aiBusy = true;
+    pet.aiMsg = 'Painting…';
+    renderPetsPanel();
+    const setMsg = (m: string) => {
+      pet.aiMsg = m;
+      const el = petsEl.querySelector(`[data-ai-gen="${i}"] span`);
+      if (el) el.textContent = `✨ ${m}`;
+    };
+    try {
+      const accessory = pet.accessory;
+      const { blob, remaining } = await illustrate(pet.photo.raw, accessory);
+      pet.aiTriesLeft--;
+      // The visitor's daily allowance is shared across pets.
+      state.pets.forEach((p) => (p.aiTriesLeft = Math.min(p.aiTriesLeft, remaining)));
+      const photo = await processPetPhoto(blob, setMsg, { soft: false });
+      pet.ai = { photo, accessory };
+      pet.useAi = true;
+      pet.aiMsg = '';
+    } catch (err) {
+      console.error(err);
+      if (err instanceof AiError && !['network', 'timeout', 'upstream_busy'].includes(err.code)) pet.aiTriesLeft--;
+      if (err instanceof AiError && err.remaining !== undefined) {
+        state.pets.forEach((p) => (p.aiTriesLeft = Math.min(p.aiTriesLeft, err.remaining!)));
+      }
+      pet.aiTriesLeft = Math.max(0, pet.aiTriesLeft);
+      pet.aiMsg = aiErrorMessage(err);
+    }
+    pet.aiBusy = false;
+    renderPetsPanel();
+    rebuildDesigns();
   }
 
   // Tabs
