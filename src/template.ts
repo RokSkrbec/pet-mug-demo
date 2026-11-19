@@ -29,8 +29,6 @@ export interface ProductDef {
   design: { x: number; y: number; scale: number };
   /** Fixed greeting text on this product, face px. */
   greeting: { y: number; fontSize: number };
-  /** Physical mug for the 3D preview (inches). Only products with this get the 3D view. */
-  mug3d?: { circumference: number; height: number };
 }
 
 export interface Template {
@@ -68,7 +66,6 @@ export const christmasPet: Template = {
       background: true,
       design: { x: 2475 / 4, y: 630, scale: 1 },
       greeting: { y: 105, fontSize: 130 },
-      mug3d: { circumference: 10.2, height: 3.8 },
       // Photo 1400 px: body x 401–948 (r 273.5 px ≈ 1.57"), rim at y 398 (curve 31 px), base at 1060 (curve 65 px)
       // → 174 px/in; 3.5" print centred → 424–1034; print = 4.125" of arc = 2.62 rad.
       photo: {

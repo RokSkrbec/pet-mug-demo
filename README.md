@@ -24,7 +24,6 @@ npm run build    # static files in dist/ → deploy to Cloudflare Pages / Vercel
 | `src/ai.ts` | Client for the AI worker. |
 | `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; the design (pet + name) is one unit edited directly on the product mockup: drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror, start over. |
 | `src/photoMockup.ts` | Photo-realistic preview: warps the print onto a real product photo and multiplies it with the photo's shading. |
-| `src/mug3d.ts` | Three.js mug; the print canvas is wrapped around it as a texture. |
 
 ## Realistic preview
 
@@ -46,7 +45,7 @@ Each product has its own print file, mockup and design position (`template.produ
 
 | Product | Print file | Notes |
 |---|---|---|
-| Mug | 2475×1050 px (8.25"×3.5" @ 300 DPI) | 2 sides with the same design, background pattern, 3D view |
+| Mug | 2475×1050 px (8.25"×3.5" @ 300 DPI) | 2 sides with the same design, background pattern |
 | Pillow | 2700×2700 px (18"×18" @ 150 DPI) | background pattern |
 | T-shirt | 1800×2400 px (12"×16" @ 150 DPI) | transparent PNG, shirt colour choice, dashed print area while editing |
 

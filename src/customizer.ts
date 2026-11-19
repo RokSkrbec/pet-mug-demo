@@ -15,7 +15,6 @@ import Konva from 'konva';
 import type { ProductDef, Template } from './template';
 import { loadImage } from './assets';
 import { cutout, preloadBackgroundRemoval } from './petPhoto';
-import { createMugPreview, type MugPreview } from './mug3d';
 import { Compositor, flatRect, loadMockup, type LoadedMockup, type View } from './photoMockup';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
 
@@ -46,7 +45,6 @@ const ICONS: Record<string, string> = {
   mug: '<path d="M5 6h11v11a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/><path d="M16 9h1.5a2.5 2.5 0 0 1 0 5H16"/>',
   pillow: '<path d="M4 5q8 2 16 0q-2 7 0 14q-8-2-16 0q2-7 0-14z"/>',
   tshirt: '<path d="M9 4l-5 3 2 4 2-1v10h8V10l2 1 2-4-5-3a3 3 0 0 1-6 0z"/>',
-  cube: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
 };
 const icon = (k: string) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
@@ -98,7 +96,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         <div class="pc-products" role="tablist" aria-label="Product">
           ${tpl.products.map((p) => `<button type="button" role="tab" data-product="${p.id}">${icon(p.mockup)}<span>${esc(p.label)}</span></button>`).join('')}
         </div>
-        <button type="button" class="pc-view3d" aria-pressed="false" hidden>${icon('cube')}<span>3D</span></button>
       </div>
       <div data-panel="edit">
         <div class="pc-stage" tabindex="0" aria-label="Product preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
@@ -118,7 +115,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
           <button type="button" data-tool="reset"><span>Start over</span></button>
         </div>
       </div>
-      <div class="pc-mug3d" data-panel="3d" hidden></div>
     </div>
     <form class="pc-panel" autocomplete="off">
       <fieldset><legend>Your pet</legend><div class="pc-pet"></div></fieldset>
@@ -257,8 +253,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     });
     $<HTMLElement>('[data-section=background]').hidden = !P.background;
     $<HTMLElement>('[data-section=shirt]').hidden = !P.colors;
-    view3dBtn.hidden = !P.mug3d;
-    if (!P.mug3d && show3d) toggle3d(false);
     layout();
     select(lastVisible());
   }
@@ -447,7 +441,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   // ---------- preview layout + photo compositing ----------
   function layout() {
     const cw = stageEl.clientWidth;
-    if (!cw) return; // hidden (3D view active)
+    if (!cw) return; // not visible yet
     const single = cw < 520;
     const ch = Math.round(cw * (single ? 0.95 : 0.6));
     stage.size({ width: cw, height: ch });
@@ -530,34 +524,9 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     return out;
   }
 
-  // 3D view (mug only), created on first use
-  const view3dBtn = $<HTMLButtonElement>('.pc-view3d');
-  let mug3d: MugPreview | undefined;
-  let show3d = false;
-  let mugTimer = 0;
-  function toggle3d(on: boolean) {
-    show3d = on;
-    view3dBtn.classList.toggle('is-active', on);
-    view3dBtn.setAttribute('aria-pressed', String(on));
-    $<HTMLElement>('[data-panel=edit]').hidden = on;
-    $<HTMLElement>('[data-panel="3d"]').hidden = !on;
-    if (on && P.mug3d) {
-      mug3d ??= createMugPreview($('.pc-mug3d'), P.mug3d, { width: P.print.width / P.print.dpi, height: P.print.height / P.print.dpi });
-      mug3d.update(renderPrint(0.9));
-      mug3d.show();
-    } else {
-      mug3d?.hide();
-      layout();
-    }
-  }
-  view3dBtn.addEventListener('click', () => toggle3d(!show3d));
-
   function changed() {
     faceLayer.batchDraw();
     scheduleCompose();
-    if (!show3d || !mug3d) return;
-    clearTimeout(mugTimer);
-    mugTimer = window.setTimeout(() => mug3d!.update(renderPrint(0.9)), 200);
   }
 
   async function exportPersonalization(): Promise<Personalization> {
