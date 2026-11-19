@@ -1,0 +1,6 @@
+# DEV TOOL config (remote preview only, never `wrangler deploy` this file).
+name = "pet-mug-ai"
+main = "mockup-gen.ts"
+compatibility_date = "2025-06-01"
+[vars]
+GEMINI_MODEL = "gemini-nano-banana-2.1"

@@ -4,15 +4,20 @@
 // One template = one design (pet illustration + name + greeting) that can be shown on several products.
 // The AI illustration is generated once and reused on every product (no extra cost per product).
 import { backgroundStars, backgroundSnow, backgroundBlush, backgroundPlain } from './assets';
+import type { PhotoMockupDef } from './photoMockup';
 
 const examples = `${import.meta.env.BASE_URL}examples/`;
+const mockups = `${import.meta.env.BASE_URL}mockups/`;
 
 export type MockupKind = 'mug' | 'pillow' | 'tshirt';
 
 export interface ProductDef {
   id: string;
   label: string;
+  /** Icon / product kind. */
   mockup: MockupKind;
+  /** Real product photo + geometry for the realistic preview (see photoMockup.ts). */
+  photo: PhotoMockupDef;
   /** Print file in px. `sides` equal faces side by side; the same design is printed on each face. */
   print: { width: number; height: number; dpi: number };
   sides: number;
@@ -64,6 +69,15 @@ export const christmasPet: Template = {
       design: { x: 2475 / 4, y: 630, scale: 1 },
       greeting: { y: 105, fontSize: 130 },
       mug3d: { circumference: 10.2, height: 3.8 },
+      // Photo 1400 px: body x 401–948 (r 273.5 px ≈ 1.57"), rim at y 398 (curve 31 px), base at 1060 (curve 65 px)
+      // → 174 px/in; 3.5" print centred → 424–1034; print = 4.125" of arc = 2.62 rad.
+      photo: {
+        photo: `${mockups}mug.jpg`,
+        mask: `${mockups}mug-mask.webp`,
+        size: 1400,
+        crop: { x: 330, y: 250, w: 950, h: 1000 },
+        warp: { kind: 'cylinder', cx: 674.5, r: 273.5, top: 424, bottom: 1034, ryTop: 32, ryBottom: 64, arc: 2.62 },
+      },
     },
     {
       id: 'pillow',
@@ -74,6 +88,18 @@ export const christmasPet: Template = {
       background: true,
       design: { x: 1350, y: 1520, scale: 2.4 },
       greeting: { y: 330, fontSize: 300 },
+      // Full-bleed print onto the pillow front; edges bow inwards (Coons patch through corners + edge mid-points).
+      photo: {
+        photo: `${mockups}pillow.jpg`,
+        mask: `${mockups}pillow-mask.webp`,
+        size: 1400,
+        crop: { x: 130, y: 160, w: 1140, h: 1100 },
+        warp: {
+          kind: 'patch',
+          tl: [240, 259], tr: [1163, 258], br: [1171, 1152], bl: [236, 1153],
+          top: [700, 324], right: [1097, 705], bottom: [700, 1145], left: [322, 705],
+        },
+      },
     },
     {
       id: 'tshirt',
@@ -92,6 +118,15 @@ export const christmasPet: Template = {
       ],
       design: { x: 900, y: 1300, scale: 2.2 },
       greeting: { y: 120, fontSize: 250 },
+      // Flat-lay photo: body ≈ 691 px ≈ 20" (size M) → 34.5 px/in; 12" × 16" print, ~3" below the collar.
+      photo: {
+        photo: `${mockups}tshirt.jpg`,
+        mask: `${mockups}tshirt-mask.webp`,
+        size: 1400,
+        crop: { x: 60, y: 100, w: 1280, h: 1200 },
+        warp: { kind: 'rect', x: 493, y: 365, w: 414, h: 552 },
+        recolor: true,
+      },
     },
   ],
   defaultProduct: 'mug',

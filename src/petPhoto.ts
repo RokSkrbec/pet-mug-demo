@@ -37,13 +37,57 @@ export async function preloadBackgroundRemoval() {
   }
 }
 
+/**
+ * Drop faint leftovers (paper texture / halo the background remover keeps at low alpha) and re-stretch
+ * the rest, so edges stay soft. Invisible on white products, but needed on coloured shirts.
+ */
+export function cleanAlpha(data: Uint8ClampedArray, cut = 80) {
+  for (let i = 3; i < data.length; i += 4) {
+    const a = data[i];
+    data[i] = a <= cut ? 0 : Math.min(255, ((a - cut) * 255) / (255 - cut) * 1.15);
+  }
+}
+
+/** Remove isolated specks: keep only connected blobs with at least `minShare` of the largest blob's area. */
+export function removeSpecks(data: Uint8ClampedArray, w: number, h: number, minShare = 0.02) {
+  const label = new Int32Array(w * h).fill(-1);
+  const sizes: number[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    if (label[start] !== -1 || data[start * 4 + 3] === 0) continue;
+    const id = sizes.length;
+    let n = 0;
+    label[start] = id;
+    stack.push(start);
+    while (stack.length) {
+      const p = stack.pop()!;
+      n++;
+      const x = p % w;
+      const y = (p - x) / w;
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+        if (q >= 0 && label[q] === -1 && data[q * 4 + 3] !== 0) {
+          label[q] = id;
+          stack.push(q);
+        }
+      }
+    }
+    sizes.push(n);
+  }
+  const min = Math.max(...sizes, 0) * minShare;
+  for (let p = 0; p < w * h; p++) if (label[p] >= 0 && sizes[label[p]] < min) data[p * 4 + 3] = 0;
+}
+
 function trim(src: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(src, 0, 0);
-  const { data } = ctx.getImageData(0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  cleanAlpha(img.data);
+  removeSpecks(img.data, w, h);
+  ctx.putImageData(img, 0, 0);
+  const { data } = img;
   let minX = w, minY = h, maxX = -1, maxY = -1;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

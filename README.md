@@ -23,9 +23,21 @@ npm run build    # static files in dist/ → deploy to Cloudflare Pages / Vercel
 | `src/petPhoto.ts` | Photo downscale for upload; in-browser background removal (`@imgly/background-removal`) + trim. |
 | `src/ai.ts` | Client for the AI worker. |
 | `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; the design (pet + name) is one unit edited directly on the product mockup: drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror, start over. |
-| `src/mugMockup.ts` | 2D ceramic mug drawn with Konva shapes. |
-| `src/mockups.ts` | 2D pillow and t-shirt mockups (Konva shapes). |
+| `src/photoMockup.ts` | Photo-realistic preview: warps the print onto a real product photo and multiplies it with the photo's shading. |
 | `src/mug3d.ts` | Three.js mug; the print canvas is wrapped around it as a texture. |
+
+## Realistic preview
+
+Each product has a photo of the blank white product (`public/mockups/*.jpg`) and a cut-out mask
+(`*-mask.webp`). The flat print is warped onto the product with a triangle mesh (cylinder for the mug,
+a pinched Coons patch for the pillow, a rectangle for the t-shirt), multiplied with the photo's own
+shading so light, curvature, fabric texture and folds show through, and clipped to the mask. T-shirt
+colours are applied the same way (colour × shading). The editable flat print stays underneath the
+preview for dragging; the print files are unaffected. Geometry per photo lives in `template.products[].photo`.
+
+The photos were generated once with Nano Banana (~$0.04 each) using the dev-only tool in
+`worker/tools/` (`npx wrangler dev --remote -c tools/wrangler.tools.toml`, uses the worker's key, never
+deployed). Replace them with real supplier photos any time: update the photo, mask and geometry.
 
 ## Products
 

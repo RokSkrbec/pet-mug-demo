@@ -8,13 +8,15 @@
 // Products: the SAME illustration/text is shown on every product (mug, pillow, t-shirt), so switching
 // products never costs another AI call. Each product has its own print size, mockup and design position.
 // A product's print can have several faces (`sides`, 2 on a mug) that all carry the same design.
+//
+// Preview: the flat, editable print (Konva) sits underneath; on top, photoMockup.ts renders the real product
+// photo with the print warped onto it and lit by the photo's own shading. Hits pass through to the flat print.
 import Konva from 'konva';
 import type { ProductDef, Template } from './template';
 import { loadImage } from './assets';
 import { cutout, preloadBackgroundRemoval } from './petPhoto';
 import { createMugPreview, type MugPreview } from './mug3d';
-import { drawMug } from './mugMockup';
-import { drawPillow, drawTshirt, pillowPath, PILLOW_BOW, TEE_HEIGHT, TEE_PRINT } from './mockups';
+import { Compositor, flatRect, loadMockup, type LoadedMockup, type View } from './photoMockup';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
 
 export interface Personalization {
@@ -152,11 +154,20 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   // ---------- Konva stage ----------
   const stageEl = $('.pc-stage');
   const stage = new Konva.Stage({ container: stageEl as HTMLDivElement, width: 10, height: 10 });
-  const mugLayer = new Konva.Layer({ listening: false }); // product body (under the print)
-  const faceLayer = new Konva.Layer(); // the print
-  const shadeLayer = new Konva.Layer({ listening: false }); // shading over the print
+  const faceLayer = new Konva.Layer(); // the flat print (interactive, hidden under the photo preview)
+  const photoLayer = new Konva.Layer({ listening: false }); // photo-realistic preview (clicks pass through)
   const uiLayer = new Konva.Layer();
-  stage.add(mugLayer, faceLayer, shadeLayer, uiLayer);
+  stage.add(faceLayer, photoLayer, uiLayer);
+  const compositor = new Compositor();
+  const photoNode = new Konva.Image({ image: undefined, x: 0, y: 0 });
+  photoLayer.add(photoNode);
+  // Product photos are loaded on demand and cached.
+  const mockups = new Map<string, Promise<LoadedMockup>>();
+  const loaded = new Map<string, LoadedMockup>();
+  const mockupFor = (p: ProductDef) => {
+    if (!mockups.has(p.id)) mockups.set(p.id, loadMockup(p.photo).then((m) => (loaded.set(p.id, m), m)));
+    return mockups.get(p.id)!;
+  };
 
   const tr = new Konva.Transformer({
     rotateEnabled: true,
@@ -182,27 +193,11 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   let FH = 0;
   let faces: Face[] = [];
   let designs: Konva.Group[] = [];
-  let exporting = false; // print export uses a plain rectangle instead of the mockup clip
-  let sag = 0; // mug: curvature of the print's top/bottom edge on the mockup, in face px
+  /** Views (product photos on the stage) and which face is shown in each. */
+  let views: View[] = [];
+  let viewFaces: Face[] = [];
 
-  function clipFor(p: ProductDef) {
-    return (ctx: Konva.Context) => {
-      if (exporting || p.mockup === 'tshirt' || (p.mockup === 'mug' && !sag)) {
-        ctx.rect(0, 0, FW, FH);
-        return;
-      }
-      if (p.mockup === 'pillow') {
-        pillowPath(ctx, 0, 0, FW, FW * PILLOW_BOW);
-        return;
-      }
-      // mug: quadratic curves through (FW/2, sag) follow the cylinder's perspective
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(FW / 2, 2 * sag, FW, 0);
-      ctx.lineTo(FW, FH);
-      ctx.quadraticCurveTo(FW / 2, FH + 2 * sag, 0, FH);
-      ctx.closePath();
-    };
-  }
+  const clip = (ctx: Konva.Context) => ctx.rect(0, 0, FW, FH);
 
   const zoomMin = () => P.design.scale * tpl.zoom.min;
   const zoomMax = () => P.design.scale * tpl.zoom.max;
@@ -222,7 +217,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     FW = P.print.width / P.sides;
     FH = P.print.height;
     faces = Array.from({ length: P.sides }, (_, i): Face => {
-      const face = new Konva.Group({ clipFunc: clipFor(P) });
+      const face = new Konva.Group({ clipFunc: clip });
       const bg = P.background
         ? new Konva.Image({ image: undefined, width: FW, height: FH, crop: { x: i * FW, y: 0, width: FW, height: FH }, listening: false })
         : undefined;
@@ -237,11 +232,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     designs.forEach((d) => {
       d.setAttrs(toAttrs(state.transforms[P.id] ?? defaultTransform()));
       const sync = () => designs.forEach((o) => o !== d && o.setAttrs({ x: d.x(), y: d.y(), scaleX: d.scaleX(), scaleY: d.scaleY(), rotation: d.rotation() }));
-      d.on('dragmove', sync);
+      d.on('dragmove', () => {
+        sync();
+        scheduleCompose();
+      });
       d.on('transform', () => {
         const s = clamp(d.scaleX(), zoomMin(), zoomMax());
         d.scale({ x: s, y: s });
         sync();
+        scheduleCompose();
       });
       d.on('dragend transformend', () => {
         saveTransform();
@@ -445,68 +444,71 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     }),
   );
 
-  // ---------- mockup layout ----------
+  // ---------- preview layout + photo compositing ----------
   function layout() {
     const cw = stageEl.clientWidth;
     if (!cw) return; // hidden (3D view active)
     const single = cw < 520;
     const ch = Math.round(cw * (single ? 0.95 : 0.6));
     stage.size({ width: cw, height: ch });
-    mugLayer.destroyChildren();
-    shadeLayer.destroyChildren();
-    const shirtHex = P.colors?.find((c) => c.id === state.shirtColor)?.hex ?? '#ffffff';
-
-    if (P.mockup === 'mug') {
-      const n = single ? 1 : P.sides;
-      const slotW = cw / n;
-      // 0.76 of the slot is the most that fits incl. the handle; height-limited on very wide stages.
-      const bw = Math.min(slotW * 0.76, ch * 0.82);
-      const s = bw / FW;
-      const ry = bw * 0.07; // perspective: how much of the rim ellipse we see
-      sag = ry / s;
-      const faceH = FH * s;
-      const gapTop = bw * 0.03;
-      const gapBottom = bw * 0.09;
-      const mugH = 2 * ry + gapTop + faceH + gapBottom;
-      const top = (ch - mugH) / 2 + ry;
-      faces.forEach((f, i) => {
-        const slot = single ? (i === faces.length - 1 ? 0 : -1) : i;
-        f.face.scale({ x: s, y: s });
-        if (slot < 0) {
-          f.face.visible(false);
-          return;
-        }
-        f.face.visible(true);
-        const handleLeft = !single && i === 0;
-        const cx = slotW * (slot + 0.5) + (handleLeft ? 1 : -1) * bw * 0.07;
-        const x0 = cx - bw / 2;
-        const faceY = top + gapTop; // print edges sit just under the rim; the centre sags with the rim
-        drawMug(mugLayer, shadeLayer, { x0, bw, top, bottom: faceY + faceH + gapBottom, ry, handleLeft });
-        f.face.position({ x: x0, y: faceY });
-      });
-    } else if (P.mockup === 'pillow') {
-      const size = Math.min(cw * 0.66, ch * 0.84);
-      const x0 = (cw - size) / 2;
-      const y0 = (ch - size * 1.06) / 2;
-      drawPillow(mugLayer, shadeLayer, { x0, y0, size });
-      faces[0].face.setAttrs({ x: x0, y: y0, scaleX: size / FW, scaleY: size / FW, visible: true });
-    } else {
-      const w = Math.min(cw * 0.8, (ch * 0.94) / TEE_HEIGHT);
-      const x0 = (cw - w) / 2;
-      const y0 = (ch - w * TEE_HEIGHT) / 2 + w * 0.01;
-      drawTshirt(mugLayer, shadeLayer, { x0, y0, w, color: shirtHex });
-      const s = (TEE_PRINT.w * w) / FW;
-      const fx = x0 + TEE_PRINT.x * w;
-      const fy = y0 + TEE_PRINT.y * w;
-      faces[0].face.setAttrs({ x: fx, y: fy, scaleX: s, scaleY: s, visible: true });
-      const dark = parseInt(shirtHex.slice(1), 16) < 0x808080;
-      printArea.setAttrs({ x: fx, y: fy, width: FW * s, height: FH * s, stroke: dark ? 'rgba(255,255,255,0.55)' : 'rgba(40,30,20,0.35)' });
+    if (!faces.length) return; // product not set up yet
+    const m = loaded.get(P.id);
+    if (!m) {
+      const p = P;
+      void mockupFor(p).then(() => p === P && layout());
+      return;
     }
+    // One photo per visible face: the mug shows both sides (mirrored photo = handle on the left).
+    const n = P.sides > 1 && !single ? P.sides : 1;
+    const { crop } = m.def;
+    const aspect = crop.w / crop.h;
+    const vh = Math.min(ch, cw / n / aspect);
+    const vw = vh * aspect;
+    const x0 = (cw - n * vw) / 2;
+    const y0 = (ch - vh) / 2;
+    views = Array.from({ length: n }, (_, i) => ({ x: x0 + i * vw, y: y0, w: vw, h: vh, mirror: n > 1 && i === 0 }));
+    viewFaces = n === faces.length ? faces : [faces[faces.length - 1]];
+    faces.forEach((f) => f.face.visible(viewFaces.includes(f)));
+    viewFaces.forEach((f, i) => {
+      const r = flatRect(m.def, views[i], FW, FH);
+      f.face.setAttrs({ x: r.x, y: r.y, scaleX: r.scale, scaleY: r.scale });
+    });
+    if (P.photo.warp.kind === 'rect') {
+      const f = viewFaces[0].face;
+      const shirtHex = P.colors?.find((c) => c.id === state.shirtColor)?.hex ?? '#ffffff';
+      const dark = parseInt(shirtHex.slice(1), 16) < 0x808080;
+      printArea.setAttrs({ x: f.x(), y: f.y(), width: FW * f.scaleX(), height: FH * f.scaleY(), stroke: dark ? 'rgba(255,255,255,0.6)' : 'rgba(40,30,20,0.4)' });
+    }
+    photoNode.setAttrs({ width: cw, height: ch });
     if (selectedFaceIndex() >= 0 && !faces[selectedFaceIndex()].face.visible()) select(lastVisible());
     tr.forceUpdate();
-    stage.batchDraw();
+    compose();
   }
   new ResizeObserver(layout).observe(stageEl);
+
+  /** Render the photo-realistic preview from the current flat print. */
+  function compose() {
+    const m = loaded.get(P.id);
+    if (!m || !views.length) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const prints = viewFaces.map((f) => {
+      const s = f.face.scaleX();
+      return f.face.toCanvas({ x: f.face.x(), y: f.face.y(), width: FW * s, height: FH * s, pixelRatio: dpr * 1.25 });
+    });
+    const shirt = P.colors?.find((c) => c.id === state.shirtColor);
+    const color = shirt && shirt.id !== 'white' ? shirt.hex : undefined;
+    photoNode.image(compositor.render(m, views, prints, stage.width(), stage.height(), dpr, color));
+    photoLayer.batchDraw();
+  }
+  let composeQueued = false;
+  function scheduleCompose() {
+    if (composeQueued) return;
+    composeQueued = true;
+    requestAnimationFrame(() => {
+      composeQueued = false;
+      compose();
+    });
+  }
 
   // ---------- export ----------
   function renderPrint(ratio = 1): HTMLCanvasElement {
@@ -514,7 +516,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     out.width = Math.round(P.print.width * ratio);
     out.height = Math.round(FH * ratio);
     const ctx = out.getContext('2d')!;
-    exporting = true;
     const placeholders = faceLayer.find('.placeholder');
     placeholders.forEach((n) => n.visible(false));
     faces.forEach((f, i) => {
@@ -526,7 +527,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       f.face.visible(wasVisible);
     });
     placeholders.forEach((n) => n.visible(true));
-    exporting = false;
     return out;
   }
 
@@ -554,6 +554,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
 
   function changed() {
     faceLayer.batchDraw();
+    scheduleCompose();
     if (!show3d || !mug3d) return;
     clearTimeout(mugTimer);
     mugTimer = window.setTimeout(() => mug3d!.update(renderPrint(0.9)), 200);
@@ -795,10 +796,12 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
 
   // ---------- initial render ----------
   await Promise.all(tpl.fonts.map((f) => document.fonts.load(`80px "${f}"`).catch(() => undefined)));
+  await mockupFor(P);
   syncPanel();
   renderPetPanel();
   renderStyles();
   setupProduct();
+  tpl.products.forEach((p) => void mockupFor(p)); // warm the other product photos
 
   return { exportPersonalization };
 }
