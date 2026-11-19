@@ -1,0 +1,94 @@
+:root {
+  --ink: #2f2c2a;
+  --muted: #8a8079;
+  --line: #ebe4dc;
+  --bg: #fbf7f2;
+  --card: #ffffff;
+  --stage: #f7efe4;
+  --accent: #c98a86;      /* dusty rose */
+  --accent-soft: #f7e7e4;
+  --primary: #2f2c2a;     /* main button, like Tortli's black "Potrdi" */
+  --focus: #7a95b8;
+  font-family: 'Fredoka', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
+.demo-header { max-width: 1200px; margin: 0 auto 20px; }
+.demo-header h1 { margin: 0 0 4px; font-size: 28px; font-weight: 600; }
+.demo-header p { margin: 0; color: var(--muted); }
+
+/* ---- widget ---- */
+.pc {
+  max-width: 1200px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start;
+}
+@media (max-width: 900px) { .pc { grid-template-columns: 1fr; } }
+
+.pc-preview { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; position: sticky; top: 16px; }
+@media (max-width: 900px) { .pc-preview { position: static; } }
+.pc-tabs { display: inline-flex; background: var(--bg); border-radius: 999px; padding: 4px; margin-bottom: 12px; }
+.pc-tab { border: 0; background: none; padding: 8px 16px; border-radius: 999px; font: inherit; cursor: pointer; color: var(--muted); }
+.pc-tab.is-active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(60,40,20,.12); }
+
+.pc-stage { width: 100%; background: var(--stage); border-radius: 12px; overflow: hidden; touch-action: none; outline: none; }
+.pc-stage:focus-visible { box-shadow: 0 0 0 3px var(--focus); }
+.pc-hint { color: var(--muted); font-size: 14px; margin: 10px 0 12px; }
+
+.pc-tools { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+.pc-tools + .pc-tools { margin-top: 8px; }
+.pc-tools-wide { grid-template-columns: 1fr 1fr; }
+.pc-tools button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 48px; font: inherit; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+}
+.pc-tools button:hover { background: var(--bg); }
+.pc-tools button.is-active { background: var(--accent-soft); border-color: var(--accent); }
+@media (max-width: 520px) { .pc-tools:not(.pc-tools-wide) { grid-template-columns: repeat(4, 1fr); } }
+
+.pc-mug3d { width: 100%; aspect-ratio: 4 / 3; background: radial-gradient(circle at 50% 40%, #fffdf9, var(--stage)); border-radius: 12px; cursor: grab; }
+[hidden] { display: none !important; }
+
+.pc-panel { display: flex; flex-direction: column; gap: 14px; }
+.pc-panel fieldset { border: 1px solid var(--line); background: var(--card); border-radius: 16px; padding: 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.pc-panel legend { font-weight: 600; padding: 0 6px; }
+.pc-pets { display: flex; flex-direction: column; gap: 14px; }
+
+.pc-input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
+.pc-input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+.pc-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pc-seg button { font: inherit; font-size: 18px; padding: 10px; border: 1px solid var(--line); background: #fff; border-radius: 10px; cursor: pointer; color: var(--ink); }
+.pc-seg button.is-active { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+.pc-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pc-swatches button { border: 2px solid transparent; background: none; padding: 0; border-radius: 10px; cursor: pointer; font: inherit; font-size: 12px; color: var(--muted); }
+.pc-swatches img { display: block; width: 100%; aspect-ratio: 1.2; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.pc-swatches button.is-active { border-color: var(--accent); color: var(--ink); }
+
+.pc-colors { display: flex; gap: 8px; }
+.pc-colors button { width: 32px; height: 32px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.pc-colors button.is-active { box-shadow: 0 0 0 2px var(--ink); }
+
+.pc-upload { display: flex; align-items: center; gap: 12px; padding: 10px; border: 2px dashed #ddd3c8; border-radius: 12px; cursor: pointer; min-height: 72px; }
+.pc-upload:hover { border-color: var(--accent); }
+.pc-upload img { width: 56px; height: 56px; object-fit: contain; background: repeating-conic-gradient(#f1ece6 0 25%, #fff 0 50%) 0 0 / 12px 12px; border-radius: 8px; }
+.pc-upload-icon { width: 56px; height: 56px; display: grid; place-items: center; font-size: 28px; color: var(--accent); background: var(--accent-soft); border-radius: 8px; }
+.pc-upload.processing { border-style: solid; border-color: var(--focus); }
+.pc-upload.processing .pc-upload-text::before { content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 2px solid var(--focus); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
+.pc-upload.error { border-color: var(--accent); color: var(--accent); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pc-btn { font: inherit; font-weight: 600; padding: 12px 16px; border-radius: 12px; border: 0; background: var(--primary); color: #fff; cursor: pointer; }
+.pc-btn:hover { filter: brightness(1.15); }
+.pc-btn-ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+.pc-btn-ghost:hover { filter: none; background: var(--bg); }
+
+dialog { border: 0; border-radius: 16px; padding: 24px; max-width: min(720px, calc(100vw - 32px)); width: 100%; }
+dialog::backdrop { background: rgba(40,30,20,.4); }
+dialog h2 { margin-top: 0; }
+dialog img { width: 100%; border-radius: 8px; border: 1px solid var(--line); }
+dialog pre { background: #2f2c2a; color: #f3ede6; padding: 14px; border-radius: 10px; overflow: auto; font-size: 13px; max-height: 280px; }
