@@ -1,6 +1,7 @@
 // Client-side image helpers:
 //  - photoToJpegBase64: shrink the customer's photo before sending it to the AI (small upload)
-//  - cutout: in-browser background removal (free) + trim, used on the AI illustration
+//  - cutout: remove the AI illustration's green-screen background (chromaKey.ts, instant, no model) + trim
+import { chromaKey } from './chromaKey';
 
 export interface Cutout {
   canvas: HTMLCanvasElement;
@@ -22,34 +23,8 @@ export async function photoToJpegBase64(file: Blob, max = 1024): Promise<string>
   return c.toDataURL('image/jpeg', 0.9).split(',')[1];
 }
 
-const BG_CONFIG = {
-  model: 'isnet_quint8' as const, // smallest model (~40 MB, cached by the browser after first use)
-  output: { format: 'image/png' as const },
-};
-
-/** Start downloading the background-removal model early (e.g. while the AI is painting). */
-export async function preloadBackgroundRemoval() {
-  try {
-    const { preload } = await import('@imgly/background-removal');
-    await preload(BG_CONFIG);
-  } catch (err) {
-    console.warn('Background removal preload failed', err);
-  }
-}
-
-/**
- * Drop faint leftovers (paper texture / halo the background remover keeps at low alpha) and re-stretch
- * the rest, so edges stay soft. Invisible on white products, but needed on coloured shirts.
- */
-export function cleanAlpha(data: Uint8ClampedArray, cut = 80) {
-  for (let i = 3; i < data.length; i += 4) {
-    const a = data[i];
-    data[i] = a <= cut ? 0 : Math.min(255, ((a - cut) * 255) / (255 - cut) * 1.15);
-  }
-}
-
 /** Remove isolated specks: keep only connected blobs with at least `minShare` of the largest blob's area. */
-export function removeSpecks(data: Uint8ClampedArray, w: number, h: number, minShare = 0.02) {
+export function removeSpecks(data: Uint8ClampedArray, w: number, h: number, minShare = 0.003) {
   const label = new Int32Array(w * h).fill(-1);
   const sizes: number[] = [];
   const stack: number[] = [];
@@ -73,21 +48,29 @@ export function removeSpecks(data: Uint8ClampedArray, w: number, h: number, minS
     }
     sizes.push(n);
   }
-  const min = Math.max(...sizes, 0) * minShare;
+  const min = sizes.reduce((m, s) => Math.max(m, s), 0) * minShare;
   for (let p = 0; p < w * h; p++) if (label[p] >= 0 && sizes[label[p]] < min) data[p * 4 + 3] = 0;
 }
 
-function trim(src: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
+/** Cut the pet out of the AI illustration and trim the transparent edges. */
+export async function cutout(image: Blob): Promise<Cutout> {
+  const bmp = await createImageBitmap(image);
+  const { width: w, height: h } = bmp;
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(src, 0, 0);
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close();
   const img = ctx.getImageData(0, 0, w, h);
-  cleanAlpha(img.data);
-  removeSpecks(img.data, w, h);
+  const backgroundRemoved = chromaKey(img.data, w, h) !== null;
+  if (!backgroundRemoved) console.warn('No flat background found, using the illustration as-is');
+  else removeSpecks(img.data, w, h);
   ctx.putImageData(img, 0, 0);
-  const { data } = img;
+  return { canvas: trim(c, img.data, w, h), backgroundRemoved };
+}
+
+function trim(src: HTMLCanvasElement, data: Uint8ClampedArray, w: number, h: number): HTMLCanvasElement {
   let minX = w, minY = h, maxX = -1, maxY = -1;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -99,33 +82,10 @@ function trim(src: CanvasImageSource, w: number, h: number): HTMLCanvasElement {
       }
     }
   }
-  if (maxX < 0) return c;
+  if (maxX < 0) return src;
   const out = document.createElement('canvas');
   out.width = maxX - minX + 1;
   out.height = maxY - minY + 1;
-  out.getContext('2d')!.drawImage(c, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
+  out.getContext('2d')!.drawImage(src, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
   return out;
-}
-
-/** Remove the background (in the browser, free) and trim transparent edges. */
-export async function cutout(image: Blob, onProgress: (msg: string) => void = () => {}): Promise<Cutout> {
-  let result: Blob = image;
-  let backgroundRemoved = true;
-  try {
-    const { removeBackground } = await import('@imgly/background-removal');
-    result = await removeBackground(image, {
-      ...BG_CONFIG,
-      progress: (key, cur, total) => {
-        if (key.startsWith('fetch')) onProgress(`Preparing… ${Math.round((cur / total) * 100)}%`);
-        else onProgress('Finishing touches…');
-      },
-    });
-  } catch (err) {
-    console.error('Background removal failed, using image as-is', err);
-    backgroundRemoved = false;
-  }
-  const bmp = await createImageBitmap(result);
-  const canvas = trim(bmp, bmp.width, bmp.height);
-  bmp.close();
-  return { canvas, backgroundRemoved };
 }

@@ -26,8 +26,12 @@ export interface Env {
 const STYLE =
   'Turn the animal in this photo into a soft, hand-painted watercolor illustration in gentle pastel colors, ' +
   'like a cute Christmas greeting card. Keep the exact same animal: same breed, fur colors, markings, eye color, ' +
-  'ear shape and pose, so the owner instantly recognizes their own pet. Show only the animal, complete and not cropped, ' +
-  'on a plain pure white background, with no text, no frame, no scenery and no ground shadow.';
+  'ear shape and pose, so the owner instantly recognizes their own pet. Show only the animal, complete and not cropped. ' +
+  // Green screen: the browser keys it out (src/chromaKey.ts). White would eat into white fur.
+  'Place it on a perfectly flat, solid pure green background (#00FF00), like a chroma-key green screen: one uniform ' +
+  'color from edge to edge, with no gradient, no texture, no paper grain, no vignette, no shadow, no ground and no ' +
+  'scenery. Paint the animal with clean edges against the green. Do not use this bright green anywhere on the animal ' +
+  'or its accessories, and do not let green light reflect onto the fur. No text and no frame.';
 
 const ACCESSORIES: Record<string, string> = {
   none: '',
@@ -120,7 +124,7 @@ async function callOnce(env: Env, model: string, prompt: string, image: string, 
         { type: 'text', text: prompt },
         { type: 'image', mime_type: mime, data: image },
       ],
-      // Nano Banana 2.1 only returns JPEG; the browser removes the white background afterwards.
+      // Nano Banana 2.1 only returns JPEG; the browser keys out the green background afterwards.
       response_format: { type: 'image', image_size: '1K', mime_type: 'image/jpeg' },
     }),
   });

@@ -13,14 +13,15 @@ npm run build    # static files in dist/ → deploy to Cloudflare Pages / Vercel
 1. Before upload the mug shows an **example illustration** for the selected style (`public/examples/`).
 2. When the customer uploads a photo, it goes (downscaled) to the AI worker, which returns a **watercolor
    illustration with the chosen accessories painted in**. The raw photo is never placed on the mug.
-3. The browser removes the illustration's white background (free, in-browser) and places it on the mug.
+3. Nano Banana paints the pet on a flat green screen; the browser keys the green out instantly (no ML model, no download) and places the pet on the product.
 4. Switching style paints that style once; already painted styles are cached, so switching back is free.
 
 | File | What it does |
 |---|---|
 | `src/template.ts` | Template = pure data (print size, backgrounds, styles + example images, fonts, limits). |
 | `src/assets.ts` | Background patterns generated as SVG. |
-| `src/petPhoto.ts` | Photo downscale for upload; in-browser background removal (`@imgly/background-removal`) + trim. |
+| `src/petPhoto.ts` | Photo downscale for upload; cut-out of the AI illustration + trim. |
+| `src/chromaKey.ts` | Green-screen key: the AI paints the pet on flat green, this removes it (with soft edges and no green halo). No ML model, ~40 ms. |
 | `src/ai.ts` | Client for the AI worker. |
 | `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; the design (pet + name) is one unit edited directly on the product mockup: drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror, start over. |
 | `src/photoMockup.ts` | Photo-realistic preview: warps the print onto a real product photo and multiplies it with the photo's shading. |

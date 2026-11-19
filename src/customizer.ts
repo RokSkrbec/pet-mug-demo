@@ -14,7 +14,7 @@
 import Konva from 'konva';
 import type { ProductDef, Template } from './template';
 import { loadImage } from './assets';
-import { cutout, preloadBackgroundRemoval } from './petPhoto';
+import { cutout } from './petPhoto';
 import { Compositor, flatRect, loadMockup, type LoadedMockup, type View } from './photoMockup';
 import { aiEnabled, aiErrorMessage, illustrate, AiError } from './ai';
 
@@ -709,12 +709,6 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     state.error = '';
     state.busyMsg = 'Painting your pet…';
     renderAll();
-    const setMsg = (m: string) => {
-      state.busyMsg = m;
-      const el = petEl.querySelector('.pc-upload-text');
-      if (el) el.textContent = m;
-    };
-    void preloadBackgroundRemoval(); // download the cut-out model while the AI paints
     try {
       let image: Blob = state.photo;
       if (aiEnabled) {
@@ -722,8 +716,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         state.triesLeft = Math.min(state.triesLeft - 1, remaining);
         image = blob;
       }
-      setMsg('Finishing touches…');
-      const { canvas } = await cutout(image, setMsg);
+      const { canvas } = await cutout(image);
       state.illustrations[style] = canvas;
       state.lastShown = canvas;
     } catch (err) {
