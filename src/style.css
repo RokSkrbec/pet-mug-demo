@@ -165,6 +165,17 @@ dialog pre { background: #2f2c2a; color: #f3ede6; padding: 14px; border-radius: 
 }
 .pc-products button svg { width: 20px; height: 20px; flex: none; }
 .pc-products button.is-active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(60,40,20,.12); }
+.pc-thumb { display: none; }
+/* After the pet is painted: the switcher becomes three live product previews. */
+.pc-products.has-thumbs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; max-width: 440px; background: none; padding: 0; border-radius: 0; }
+.pc-products.has-thumbs button {
+  flex-direction: column; gap: 4px; padding: 6px 6px 8px; border-radius: 14px; background: var(--bg);
+  border: 2px solid transparent; font-size: 14px; min-width: 0; box-shadow: none;
+}
+.pc-products.has-thumbs button:hover { border-color: var(--line, #e7ddd2); }
+.pc-products.has-thumbs button.is-active { background: var(--card); border-color: var(--ink); box-shadow: none; }
+.pc-products.has-thumbs .pc-thumb { display: block; width: 100%; aspect-ratio: 1; height: auto; border-radius: 10px; }
+.pc-products.has-thumbs svg { display: none; }
 .pc-shirt-colors { flex-wrap: wrap; }
 @media (max-width: 600px) {
   .pc-head { margin-bottom: 8px; }

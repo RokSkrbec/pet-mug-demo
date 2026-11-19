@@ -41,7 +41,7 @@ deployed). Replace them with real supplier photos any time: update the photo, ma
 
 ## Products
 
-The same illustration, name and text appear on every product; switching products never calls the AI again.
+The same illustration, name and text appear on every product; switching products never calls the AI again. Once the pet is painted, the product switcher turns into three live thumbnails (rendered offscreen with the same compositor), so the customer sees their pet on every product at once.
 Each product has its own print file, mockup and design position (`template.products`):
 
 | Product | Print file | Notes |

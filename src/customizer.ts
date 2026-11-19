@@ -94,7 +94,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     <div class="pc-preview">
       <div class="pc-head">
         <div class="pc-products" role="tablist" aria-label="Product">
-          ${tpl.products.map((p) => `<button type="button" role="tab" data-product="${p.id}">${icon(p.mockup)}<span>${esc(p.label)}</span></button>`).join('')}
+          ${tpl.products.map((p) => `<button type="button" role="tab" data-product="${p.id}"><canvas class="pc-thumb" aria-hidden="true"></canvas>${icon(p.mockup)}<span>${esc(p.label)}</span></button>`).join('')}
         </div>
       </div>
       <div data-panel="edit">
@@ -193,11 +193,35 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   let views: View[] = [];
   let viewFaces: Face[] = [];
 
-  const clip = (ctx: Konva.Context) => ctx.rect(0, 0, FW, FH);
+  /** One print face of product `p` (background slice, greeting, design group). Used on stage and for thumbnails. */
+  function makeFace(p: ProductDef, i: number, draggable: boolean): Face {
+    const fw = p.print.width / p.sides;
+    const fh = p.print.height;
+    const face = new Konva.Group({ clipFunc: (ctx) => ctx.rect(0, 0, fw, fh) });
+    const bg = p.background
+      ? new Konva.Image({ image: undefined, width: fw, height: fh, crop: { x: i * fw, y: 0, width: fw, height: fh }, listening: false })
+      : undefined;
+    const greeting = new Konva.Text({ x: 0, y: p.greeting.y, width: fw, align: 'center', wrap: 'none', listening: false });
+    const design = new Konva.Group({ name: 'design', draggable });
+    if (bg) face.add(bg);
+    face.add(greeting, design);
+    styleGreeting(greeting, p);
+    return { face, bg, greeting, design };
+  }
+
+  function styleGreeting(greeting: Konva.Text, p: ProductDef) {
+    const fw = p.print.width / p.sides;
+    greeting.text(state.greeting);
+    greeting.fontFamily(state.font);
+    greeting.fill(state.textColor);
+    greeting.fontSize(p.greeting.fontSize);
+    const w = greeting.measureSize(state.greeting).width;
+    if (w > fw * 0.86) greeting.fontSize((p.greeting.fontSize * fw * 0.86) / w);
+  }
 
   const zoomMin = () => P.design.scale * tpl.zoom.min;
   const zoomMax = () => P.design.scale * tpl.zoom.max;
-  const defaultTransform = (): Transform => ({ x: P.design.x, y: P.design.y, scale: P.design.scale, rotation: 0 });
+  const defaultTransform = (p = P): Transform => ({ x: p.design.x, y: p.design.y, scale: p.design.scale, rotation: 0 });
   const toAttrs = (t: Transform) => ({ x: t.x, y: t.y, scaleX: t.scale, scaleY: t.scale, rotation: t.rotation });
   const saveTransform = () => {
     const d = designs[0];
@@ -212,18 +236,8 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     P = product(state.product);
     FW = P.print.width / P.sides;
     FH = P.print.height;
-    faces = Array.from({ length: P.sides }, (_, i): Face => {
-      const face = new Konva.Group({ clipFunc: clip });
-      const bg = P.background
-        ? new Konva.Image({ image: undefined, width: FW, height: FH, crop: { x: i * FW, y: 0, width: FW, height: FH }, listening: false })
-        : undefined;
-      const greeting = new Konva.Text({ x: 0, y: P.greeting.y, width: FW, align: 'center', wrap: 'none', listening: false });
-      const design = new Konva.Group({ name: 'design', draggable: true });
-      if (bg) face.add(bg);
-      face.add(greeting, design);
-      faceLayer.add(face);
-      return { face, bg, greeting, design };
-    });
+    faces = Array.from({ length: P.sides }, (_, i) => makeFace(P, i, true));
+    faces.forEach((f) => faceLayer.add(f.face));
     designs = faces.map((f) => f.design);
     designs.forEach((d) => {
       d.setAttrs(toAttrs(state.transforms[P.id] ?? defaultTransform()));
@@ -306,14 +320,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   }
 
   function applyText() {
-    faces.forEach(({ greeting }) => {
-      greeting.text(state.greeting);
-      greeting.fontFamily(state.font);
-      greeting.fill(state.textColor);
-      greeting.fontSize(P.greeting.fontSize);
-      const w = greeting.measureSize(state.greeting).width;
-      if (w > FW * 0.86) greeting.fontSize((P.greeting.fontSize * FW * 0.86) / w);
-    });
+    faces.forEach(({ greeting }) => styleGreeting(greeting, P));
   }
 
   async function applyBackground() {
@@ -527,6 +534,57 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   function changed() {
     faceLayer.batchDraw();
     scheduleCompose();
+    scheduleThumbs();
+  }
+
+  // ---------- "your pet on every product" thumbnails (in the product switcher, once the pet is painted) ----------
+  // Rendered offscreen with the same faces + compositor as the main preview, so they always match it.
+  const thumbLayer = new Konva.Layer();
+  new Konva.Stage({ container: document.createElement('div'), width: 1, height: 1 }).add(thumbLayer);
+  const thumbCompositor = new Compositor();
+  const productsEl = $('.pc-products');
+  const THUMB = 120; // css px (square)
+  let thumbTimer = 0;
+  let thumbRun = 0;
+  const showThumbs = () => !!state.photo && !!(own() ?? state.lastShown);
+
+  function scheduleThumbs() {
+    clearTimeout(thumbTimer);
+    thumbTimer = window.setTimeout(() => void renderThumbs(), 250);
+  }
+
+  async function renderThumbs() {
+    const on = showThumbs();
+    productsEl.classList.toggle('has-thumbs', on);
+    if (!on) return;
+    const run = ++thumbRun;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (const p of tpl.products) {
+      const [m, bgImg] = await Promise.all([mockupFor(p), p.background ? bgImage(state.background, p) : undefined]);
+      if (run !== thumbRun) return; // something changed meanwhile; a newer run takes over
+      // One view, showing the last face (on the mug: handle on the right), like the main preview on a phone.
+      const { crop } = m.def;
+      const vh = Math.min(THUMB, THUMB / (crop.w / crop.h));
+      const vw = vh * (crop.w / crop.h);
+      const view: View = { x: (THUMB - vw) / 2, y: (THUMB - vh) / 2, w: vw, h: vh, mirror: false };
+      const f = makeFace(p, p.sides - 1, false);
+      thumbLayer.add(f.face);
+      f.bg?.image(bgImg);
+      f.design.setAttrs(toAttrs(state.transforms[p.id] ?? defaultTransform(p)));
+      buildDesign(f.design);
+      f.design.find('.placeholder').forEach((n) => n.visible(false));
+      const fw = p.print.width / p.sides;
+      const r = flatRect(m.def, view, fw, p.print.height);
+      f.face.setAttrs({ x: r.x, y: r.y, scaleX: r.scale, scaleY: r.scale });
+      const print = f.face.toCanvas({ x: r.x, y: r.y, width: fw * r.scale, height: p.print.height * r.scale, pixelRatio: dpr * 1.25 });
+      f.face.destroy();
+      const shirt = p.colors?.find((c) => c.id === state.shirtColor);
+      const out = thumbCompositor.render(m, [view], [print], THUMB, THUMB, dpr, shirt && shirt.id !== 'white' ? shirt.hex : undefined);
+      const c = productsEl.querySelector<HTMLCanvasElement>(`[data-product="${p.id}"] .pc-thumb`)!;
+      c.width = out.width;
+      c.height = out.height;
+      c.getContext('2d')!.drawImage(out, 0, 0);
+    }
   }
 
   async function exportPersonalization(): Promise<Personalization> {
@@ -627,6 +685,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       if (b.dataset.product === state.product) return;
       state.product = b.dataset.product!;
       setupProduct();
+      scheduleThumbs();
     }),
   );
   $('[data-field=background]').addEventListener('click', (e) => {
@@ -645,6 +704,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     state.shirtColor = v;
     syncPanel();
     layout();
+    scheduleThumbs();
   });
   $('[data-field=textColor]').addEventListener('click', (e) => {
     const v = pick(e);
