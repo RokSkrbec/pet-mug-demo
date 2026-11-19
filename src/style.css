@@ -15,16 +15,19 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
-.demo-header { max-width: 1200px; margin: 0 auto 20px; }
+.demo-header { max-width: 1360px; margin: 0 auto 20px; }
 .demo-header h1 { margin: 0 0 4px; font-size: 28px; font-weight: 600; }
 .demo-header p { margin: 0; color: var(--muted); }
 
 /* ---- widget ---- */
 .pc {
-  max-width: 1200px; margin: 0 auto;
-  display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start;
+  max-width: 1360px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start;
 }
-@media (max-width: 900px) { .pc { grid-template-columns: 1fr; } }
+/* minmax(0, …) + min-width: 0 let the columns shrink below the canvas' previous width (e.g. after
+   rotating a phone), so the canvas is resized instead of pushing the page wider. */
+@media (max-width: 900px) { .pc { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
+.pc > * { min-width: 0; }
 
 .pc-preview { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; position: sticky; top: 16px; }
 @media (max-width: 900px) { .pc-preview { position: static; } }
@@ -32,7 +35,8 @@ body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
 .pc-tab { border: 0; background: none; padding: 8px 16px; border-radius: 999px; font: inherit; cursor: pointer; color: var(--muted); }
 .pc-tab.is-active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(60,40,20,.12); }
 
-.pc-stage { width: 100%; background: var(--stage); border-radius: 12px; overflow: hidden; touch-action: none; outline: none; }
+/* pan-y: the page still scrolls when you swipe over the mug; touches on the design itself are captured by Konva. */
+.pc-stage { width: 100%; background: var(--stage); border-radius: 12px; overflow: hidden; touch-action: pan-y; outline: none; }
 .pc-stage:focus-visible { box-shadow: 0 0 0 3px var(--focus); }
 .pc-hint { color: var(--muted); font-size: 14px; margin: 10px 0 12px; }
 
@@ -48,7 +52,8 @@ body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
 .pc-tools button.is-active { background: var(--accent-soft); border-color: var(--accent); }
 @media (max-width: 520px) { .pc-tools:not(.pc-tools-wide) { grid-template-columns: repeat(4, 1fr); } }
 
-.pc-mug3d { width: 100%; aspect-ratio: 4 / 3; background: radial-gradient(circle at 50% 40%, #fffdf9, var(--stage)); border-radius: 12px; cursor: grab; }
+.pc-mug3d canvas { display: block; max-width: 100%; touch-action: pan-y; }
+.pc-mug3d { width: 100%; overflow: hidden; aspect-ratio: 4 / 3; background: radial-gradient(circle at 50% 40%, #fffdf9, var(--stage)); border-radius: 12px; cursor: grab; }
 [hidden] { display: none !important; }
 
 .pc-panel { display: flex; flex-direction: column; gap: 14px; }
@@ -128,3 +133,25 @@ dialog pre { background: #2f2c2a; color: #f3ede6; padding: 14px; border-radius: 
 .pc-ai:empty { display: none; }
 .pc-ai-btn-quiet { background: #fff; color: var(--ink); border-color: var(--line); font-weight: 500; }
 .pc-actions-msg { margin: 0; min-height: 1.2em; font-size: 14px; color: #a8646c; text-align: center; }
+
+/* ---- phones ---- */
+@media (max-width: 600px) {
+  body { padding: 16px 12px 40px; }
+  .demo-header h1 { font-size: 22px; }
+  .demo-header p { font-size: 14px; }
+  .pc-preview { padding: 10px; border-radius: 14px; }
+  .pc-tabs { margin-bottom: 8px; }
+  .pc-hint { font-size: 13px; margin: 8px 2px 10px; }
+  .pc-tools { gap: 6px; }
+  .pc-tools button { height: 44px; }
+  .pc-panel fieldset { padding: 12px; }
+  .pc-swatches { grid-template-columns: repeat(2, 1fr); }
+  .pc-actions { grid-template-columns: 1fr; }
+  dialog { padding: 16px; }
+}
+
+.pc-hint-touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .pc-hint-mouse { display: none; }
+  .pc-hint-touch { display: inline; }
+}

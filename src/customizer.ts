@@ -79,7 +79,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       </div>
       <div data-panel="edit">
         <div class="pc-stage" tabindex="0" aria-label="Mug preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
-        <p class="pc-hint">Drag the design on the mug. Zoom with the mouse wheel or two fingers, or use the buttons below and the arrow keys.</p>
+        <p class="pc-hint"><span class="pc-hint-mouse">Drag the design on the mug. Zoom with the mouse wheel, or use the buttons below and the arrow keys.</span><span class="pc-hint-touch">Drag the design with your finger. Pinch with two fingers to zoom, or use the buttons below.</span></p>
         <div class="pc-tools">
           <button type="button" data-tool="zoomIn" aria-label="Zoom in" title="Zoom in">${icon('zoomIn')}</button>
           <button type="button" data-tool="zoomOut" aria-label="Zoom out" title="Zoom out">${icon('zoomOut')}</button>
@@ -375,7 +375,8 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     shadeLayer.destroyChildren();
 
     const slotW = cw / n;
-    const bw = Math.min(slotW * 0.72, ch * 0.8);
+    // 0.76 of the slot is the most that fits incl. the handle; height-limited on very wide stages.
+    const bw = Math.min(slotW * 0.76, ch * 0.82);
     const s = bw / FW;
     const ry = bw * 0.07; // perspective: how much of the rim ellipse we see
     sag = ry / s;

@@ -98,6 +98,8 @@ export function createMugPreview(
   controls.enableZoom = false;
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.8;
+  // OrbitControls sets touch-action: none; allow vertical page scrolling over the 3D view on phones.
+  renderer.domElement.style.touchAction = 'pan-y';
   controls.minPolarAngle = Math.PI * 0.3;
   controls.maxPolarAngle = Math.PI * 0.6;
   renderer.domElement.addEventListener('pointerdown', () => (controls.autoRotate = false));
