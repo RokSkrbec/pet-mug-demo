@@ -37,7 +37,7 @@ through a tiny Cloudflare Worker in [`worker/`](worker/) that holds the key and 
 
 | Limit | Where | Default |
 |---|---|---|
-| Paint on upload / style switch only, cached per style, max tries per photo | browser | 3 (`template.ai.triesPerPhoto`) |
+| Paint on upload / style switch only, cached per style, max tries per photo | browser | 10 (`template.ai.triesPerPhoto`) |
 | Per visitor (IP) per day | worker, KV counter | 10 (`PER_IP_DAILY`) |
 | All visitors per day (budget cap) | worker, KV counter | 200 (`GLOBAL_DAILY`) |
 | Allowed websites | worker, CORS | `ALLOWED_ORIGINS` |

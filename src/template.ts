@@ -58,5 +58,5 @@ export const christmasPetMug: Template = {
   defaultStyle: 'hat-scarf',
   greeting: { default: 'Vesel božič', x: FW / 2, y: 105, fontSize: 130 },
   petName: { default: 'Luna', fontSize: 96, gap: 0 },
-  ai: { triesPerPhoto: 3 },
+  ai: { triesPerPhoto: 10 },
 };
