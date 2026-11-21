@@ -133,11 +133,12 @@ export const christmasPet: Template = {
     { id: 'blush', label: 'Blush', render: backgroundBlush, textColor: '#a8646c' },
     { id: 'plain', label: 'Plain white', render: backgroundPlain, textColor: '#3f3f46' },
   ],
-  fonts: ['Great Vibes', 'Dancing Script', 'Pacifico', 'Mountains of Christmas', 'Fredoka'],
+  // Script fonts only, all with č/š/ž (latin-ext) for the Slovenian version. Loaded in index.html.
+  fonts: ['Parisienne', 'Pinyon Script', 'Imperial Script', 'Alex Brush', 'Style Script', 'Yellowtail'],
   textColors: ['#3f3f46', '#a8646c', '#6f8f76', '#5f7a96', '#b8953f', '#ffffff'],
   pet: { x: 0, y: 220, h: 560 },
-  petName: { default: 'Luna', fontSize: 96, gap: 0 },
-  greetingDefault: 'Vesel božič',
+  petName: { default: 'Luna', fontSize: 140, gap: -10 },
+  greetingDefault: 'Merry Christmas',
   zoom: { min: 0.3, max: 2.5 },
   styles: [
     { id: 'hat-scarf', label: 'Santa hat + scarf', example: `${examples}example-hat-scarf.webp` },
