@@ -53,12 +53,18 @@ const icon = (k: string) =>
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+/** The three things on a print that the customer can move, resize and rotate independently. */
+type El = 'pet' | 'name' | 'greeting';
+type TextEl = Exclude<El, 'pet'>;
+const ELS: El[] = ['pet', 'name', 'greeting'];
+const EL_LABEL: Record<El, string> = { pet: 'Pet', name: 'Name', greeting: 'Greeting' };
+
 interface Face {
   face: Konva.Group;
   bg?: Konva.Image;
-  greeting: Konva.Text;
-  design: Konva.Group;
+  els: { pet: Konva.Group; name: Konva.Text; greeting: Konva.Text };
 }
+/** Position of an element's centre (face px), its scale and rotation. */
 type Transform = { x: number; y: number; scale: number; rotation: number };
 
 export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: CustomizerOptions = {}) {
@@ -69,11 +75,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     product: tpl.defaultProduct,
     background: tpl.backgrounds[0].id,
     shirtColor: tshirt?.colors?.[0].id ?? '',
-    greeting: tpl.greetingDefault,
-    font: tpl.fonts[0],
-    textColor: tpl.backgrounds[0].textColor,
+    /** The two texts, each with its own font and colour. `picked`: the customer chose the colour (a new background
+     *  then no longer resets it to the background's matching colour). */
+    text: {
+      name: { value: tpl.petName.default, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false },
+      greeting: { value: tpl.greetingDefault, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false },
+    } as Record<TextEl, { value: string; font: string; color: string; picked: boolean }>,
+    /** Element the tool buttons act on (and that has handles when selected on the stage). */
+    selected: 'pet' as El,
     mirror: false,
-    name: tpl.petName.default,
     style: tpl.defaultStyle,
     photo: undefined as File | undefined,
     photoThumb: '',
@@ -85,8 +95,8 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     busyMsg: '',
     error: '',
     triesLeft: tpl.ai.triesPerPhoto,
-    /** Design position per product (each product has its own print area). */
-    transforms: {} as Record<string, Transform>,
+    /** Element positions per product (each product has its own print area); missing = product default. */
+    transforms: {} as Record<string, Partial<Record<El, Transform>>>,
   };
   const own = () => state.illustrations[state.style];
 
@@ -100,7 +110,11 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       </div>
       <div data-panel="edit">
         <div class="pc-stage" tabindex="0" aria-label="Product preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
-        <p class="pc-hint"><span class="pc-hint-mouse">Drag the design on the product. Zoom with the mouse wheel, or use the buttons below and the arrow keys.</span><span class="pc-hint-touch">Drag the design with your finger. Pinch with two fingers to zoom, or use the buttons below.</span></p>
+        <p class="pc-hint"><span class="pc-hint-mouse">Click the pet, the name or the greeting to select it. Drag to move it, drag a corner to resize, or use the buttons below.</span><span class="pc-hint-touch">Tap the pet, the name or the greeting to select it. Drag to move it, pinch to resize, or use the buttons below.</span></p>
+        <div class="pc-els" role="radiogroup" aria-label="What to edit">
+          <span>Edit:</span>
+          ${ELS.map((el) => `<button type="button" role="radio" data-el="${el}">${EL_LABEL[el]}</button>`).join('')}
+        </div>
         <div class="pc-tools">
           <button type="button" data-tool="zoomIn" aria-label="Zoom in" title="Zoom in">${icon('zoomIn')}</button>
           <button type="button" data-tool="zoomOut" aria-label="Zoom out" title="Zoom out">${icon('zoomOut')}</button>
@@ -113,7 +127,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         </div>
         <div class="pc-tools pc-tools-wide">
           <button type="button" data-tool="mirror">${icon('mirror')}<span>Mirror pet</span></button>
-          <button type="button" data-tool="reset"><span>Start over</span></button>
+          <button type="button" data-tool="reset"><span>Reset positions</span></button>
         </div>
       </div>
     </div>
@@ -122,11 +136,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div><div class="pc-botcheck"></div></fieldset>
       <fieldset data-section="background"><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
       <fieldset data-section="shirt" hidden><legend>Shirt color</legend><div class="pc-colors pc-shirt-colors" data-field="shirtColor"></div></fieldset>
-      <fieldset><legend>Text</legend>
-        <input type="text" class="pc-input" data-field="greeting" maxlength="28" placeholder="Greeting (optional)">
-        <select class="pc-input" data-field="font"></select>
-        <div class="pc-colors" data-field="textColor"></div>
-      </fieldset>
+      ${(['name', 'greeting'] as TextEl[])
+        .map(
+          (el) => `<fieldset class="pc-text" data-section="${el}"><legend>${el === 'name' ? 'Pet name' : 'Greeting'}</legend>
+        <input type="text" class="pc-input" data-text="${el}" maxlength="${el === 'name' ? 14 : 28}" placeholder="${el === 'name' ? 'Pet name (optional)' : 'Greeting (optional)'}">
+        <div class="pc-fonts" role="radiogroup" aria-label="Font">${tpl.fonts.map((f) => `<button type="button" role="radio" data-font="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</button>`).join('')}</div>
+        <div class="pc-colors" role="radiogroup" aria-label="Text color">${tpl.textColors.map((c) => `<button type="button" role="radio" data-color="${c}" style="--c:${c}" aria-label="Color ${c}"></button>`).join('')}</div>
+      </fieldset>`,
+        )
+        .join('')}
       <div class="pc-actions">
         <button type="button" class="pc-btn pc-btn-ghost" data-action="download">Download print file</button>
         <button type="button" class="pc-btn" data-action="cart">Add to cart</button>
@@ -189,12 +207,32 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   let FW = 0;
   let FH = 0;
   let faces: Face[] = [];
-  let designs: Konva.Group[] = [];
+  /** Face that shows the selection handles (-1 = nothing selected). */
+  let selFace = -1;
   /** Views (product photos on the stage) and which face is shown in each. */
   let views: View[] = [];
   let viewFaces: Face[] = [];
 
-  /** One print face of product `p` (background slice, greeting, design group). Used on stage and for thumbnails. */
+  /** Default layout: pet in the middle, name under it, greeting on top (from the template's design units). */
+  function defaultTransform(p: ProductDef, el: El): Transform {
+    const d = p.design;
+    const s = tpl.pet;
+    if (el === 'pet') return { x: d.x + s.x * d.scale, y: d.y + (s.y - s.h / 2) * d.scale, scale: d.scale, rotation: 0 };
+    if (el === 'name') return { x: d.x + s.x * d.scale, y: d.y + (s.y + tpl.petName.gap + tpl.petName.fontSize / 2) * d.scale, scale: d.scale, rotation: 0 };
+    return { x: p.print.width / p.sides / 2, y: p.greeting.y + p.greeting.fontSize / 2, scale: 1, rotation: 0 };
+  }
+  const transformOf = (p: ProductDef, el: El) => state.transforms[p.id]?.[el] ?? defaultTransform(p, el);
+  const toAttrs = (t: Transform) => ({ x: t.x, y: t.y, scaleX: t.scale, scaleY: t.scale, rotation: t.rotation });
+  const saveTransform = (el: El) => {
+    const n = faces[0]?.els[el];
+    if (n) (state.transforms[P.id] ??= {})[el] = { x: n.x(), y: n.y(), scale: n.scaleX(), rotation: n.rotation() };
+  };
+  const zoomRange = (el: El) => {
+    const s = defaultTransform(P, el).scale;
+    return [s * tpl.zoom.min, s * tpl.zoom.max] as const;
+  };
+
+  /** One print face of product `p` with all its elements. Used on stage and for thumbnails. */
   function makeFace(p: ProductDef, i: number, draggable: boolean): Face {
     const fw = p.print.width / p.sides;
     const fh = p.print.height;
@@ -202,65 +240,66 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const bg = p.background
       ? new Konva.Image({ image: undefined, width: fw, height: fh, crop: { x: i * fw, y: 0, width: fw, height: fh }, listening: false })
       : undefined;
-    const greeting = new Konva.Text({ x: 0, y: p.greeting.y, width: fw, align: 'center', wrap: 'none', listening: false });
-    const design = new Konva.Group({ name: 'design', draggable });
+    const common = { name: 'el', draggable };
+    const els = {
+      pet: new Konva.Group({ ...common, el: 'pet' }),
+      name: new Konva.Text({ ...common, el: 'name', wrap: 'none' }),
+      greeting: new Konva.Text({ ...common, el: 'greeting', wrap: 'none' }),
+    };
     if (bg) face.add(bg);
-    face.add(greeting, design);
-    styleGreeting(greeting, p);
-    return { face, bg, greeting, design };
+    face.add(els.greeting, els.pet, els.name);
+    buildPet(els.pet);
+    styleText(els.name, 'name', p);
+    styleText(els.greeting, 'greeting', p);
+    ELS.forEach((el) => els[el].setAttrs(toAttrs(transformOf(p, el))));
+    return { face, bg, els };
   }
 
-  function styleGreeting(greeting: Konva.Text, p: ProductDef) {
-    const fw = p.print.width / p.sides;
-    greeting.text(state.greeting);
-    greeting.fontFamily(state.font);
-    greeting.fill(state.textColor);
-    greeting.fontSize(p.greeting.fontSize);
-    const w = greeting.measureSize(state.greeting).width;
-    if (w > fw * 0.86) greeting.fontSize((p.greeting.fontSize * fw * 0.86) / w);
+  /** Text content, font and colour. Text is centred on its position, so editing it keeps it in place. */
+  function styleText(t: Konva.Text, el: TextEl, p: ProductDef) {
+    const { value, font, color } = state.text[el];
+    const base = el === 'name' ? tpl.petName.fontSize : p.greeting.fontSize;
+    t.setAttrs({ text: value, fontFamily: font, fill: color, fontSize: base });
+    // Long texts shrink to fit the print at their default size (the customer can still resize them).
+    const maxW = (p.print.width / p.sides) * 0.86 / defaultTransform(p, el).scale;
+    if (t.width() > maxW) t.fontSize((base * maxW) / t.width());
+    t.offset({ x: t.width() / 2, y: t.height() / 2 });
+    t.visible(value.trim().length > 0);
   }
-
-  const zoomMin = () => P.design.scale * tpl.zoom.min;
-  const zoomMax = () => P.design.scale * tpl.zoom.max;
-  const defaultTransform = (p = P): Transform => ({ x: p.design.x, y: p.design.y, scale: p.design.scale, rotation: 0 });
-  const toAttrs = (t: Transform) => ({ x: t.x, y: t.y, scaleX: t.scale, scaleY: t.scale, rotation: t.rotation });
-  const saveTransform = () => {
-    const d = designs[0];
-    if (d) state.transforms[P.id] = { x: d.x(), y: d.y(), scale: d.scaleX(), rotation: d.rotation() };
-  };
 
   /** (Re)build the print faces for the current product. */
   function setupProduct() {
-    saveTransform();
     tr.nodes([]);
+    selFace = -1;
     faceLayer.destroyChildren();
     P = product(state.product);
     FW = P.print.width / P.sides;
     FH = P.print.height;
     faces = Array.from({ length: P.sides }, (_, i) => makeFace(P, i, true));
     faces.forEach((f) => faceLayer.add(f.face));
-    designs = faces.map((f) => f.design);
-    designs.forEach((d) => {
-      d.setAttrs(toAttrs(state.transforms[P.id] ?? defaultTransform()));
-      const sync = () => designs.forEach((o) => o !== d && o.setAttrs({ x: d.x(), y: d.y(), scaleX: d.scaleX(), scaleY: d.scaleY(), rotation: d.rotation() }));
-      d.on('dragmove', () => {
-        sync();
-        scheduleCompose();
+    // Every element exists once per face (both sides of the mug) and always moves together.
+    for (const el of ELS) {
+      faces.forEach((f) => {
+        const n = f.els[el];
+        const sync = () => faces.forEach((o) => o !== f && o.els[el].setAttrs({ x: n.x(), y: n.y(), scaleX: n.scaleX(), scaleY: n.scaleY(), rotation: n.rotation() }));
+        n.on('dragmove', () => {
+          sync();
+          scheduleCompose();
+        });
+        n.on('transform', () => {
+          const [lo, hi] = zoomRange(el);
+          const s = clamp(n.scaleX(), lo, hi);
+          n.scale({ x: s, y: s });
+          sync();
+          scheduleCompose();
+        });
+        n.on('dragend transformend', () => {
+          saveTransform(el);
+          changed();
+        });
       });
-      d.on('transform', () => {
-        const s = clamp(d.scaleX(), zoomMin(), zoomMax());
-        d.scale({ x: s, y: s });
-        sync();
-        scheduleCompose();
-      });
-      d.on('dragend transformend', () => {
-        saveTransform();
-        changed();
-      });
-    });
+    }
     void applyBackground();
-    applyText();
-    designs.forEach(buildDesign);
     // UI that depends on the product
     root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach((b) => {
       b.classList.toggle('is-active', b.dataset.product === P.id);
@@ -269,11 +308,11 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     $<HTMLElement>('[data-section=background]').hidden = !P.background;
     $<HTMLElement>('[data-section=shirt]').hidden = !P.colors;
     layout();
-    select(lastVisible());
+    select(state.selected);
   }
 
-  // ---------- design content (identical on every face) ----------
-  function buildDesign(g: Konva.Group) {
+  // ---------- pet illustration (identical on every face) ----------
+  function buildPet(g: Konva.Group) {
     g.destroyChildren();
     const slot = tpl.pet;
     const mine = own();
@@ -283,30 +322,25 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const ih = (img as HTMLCanvasElement).height;
     const pending = !!state.photo && !mine; // photo uploaded but this style isn't painted (yet)
     const scale = Math.min(slot.h / ih, (slot.h * 1.1) / iw);
+    const w = iw * scale;
+    const h = ih * scale;
 
-    // Mirror flips the pet around its own centre; text is never mirrored.
-    const flip = new Konva.Group({ x: slot.x, y: slot.y, scaleX: state.mirror ? -1 : 1 });
-    flip.add(new Konva.Image({ image: img, width: iw * scale, height: ih * scale, offsetX: (iw * scale) / 2, offsetY: ih * scale, opacity: pending ? 0.3 : 1 }));
+    // The group's origin is the centre of the pet slot; the pet stands on the slot's bottom edge.
+    // Mirror flips the pet around its own centre.
+    const flip = new Konva.Group({ scaleX: state.mirror ? -1 : 1 });
+    flip.add(new Konva.Image({ image: img, width: w, height: h, offsetX: w / 2, offsetY: h, y: slot.h / 2, opacity: pending ? 0.3 : 1 }));
     g.add(flip);
 
     if (pending) {
       const msg = state.busy ? 'Painting your pet…' : state.error ? 'Not painted yet' : '';
       if (msg) {
-        const t = new Konva.Text({ name: 'placeholder', text: msg, y: slot.y - slot.h / 2 - 40, fontSize: 70, fontFamily: 'Fredoka', fill: '#7d7067', align: 'center' });
-        t.offsetX(t.width() / 2);
-        t.x(slot.x);
+        const t = new Konva.Text({ name: 'placeholder', text: msg, fontSize: 70, fontFamily: 'Fredoka', fill: '#7d7067', align: 'center' });
+        t.offset({ x: t.width() / 2, y: t.height() / 2 });
         g.add(t);
       }
     }
 
-    if (state.name.trim()) {
-      const name = new Konva.Text({ text: state.name, y: slot.y + tpl.petName.gap, wrap: 'none', fontSize: tpl.petName.fontSize, fontFamily: state.font, fill: state.textColor });
-      name.offsetX(name.width() / 2);
-      name.x(slot.x);
-      g.add(name);
-    }
-
-    // Invisible hit area so the whole design (incl. gaps) is draggable.
+    // Invisible hit area so the whole pet (incl. transparent gaps) is draggable.
     const box = g.getClientRect({ relativeTo: g, skipShadow: true, skipStroke: true });
     const pad = 20;
     const hit = new Konva.Rect({ x: box.x - pad, y: box.y - pad, width: box.width + pad * 2, height: box.height + pad * 2, fill: 'rgba(0,0,0,0)' });
@@ -314,14 +348,16 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     hit.moveToBottom();
   }
 
-  function rebuildDesigns() {
-    designs.forEach(buildDesign);
+  function rebuildPets() {
+    faces.forEach((f) => buildPet(f.els.pet));
     tr.forceUpdate();
     changed();
   }
 
-  function applyText() {
-    faces.forEach(({ greeting }) => styleGreeting(greeting, P));
+  function applyText(el: TextEl) {
+    faces.forEach((f) => styleText(f.els[el], el, P));
+    if (state.selected === el) select(el, selFace >= 0 ? selFace : -1); // handles follow the new size (or hide when empty)
+    changed();
   }
 
   async function applyBackground() {
@@ -333,53 +369,76 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     changed();
   }
 
-  // ---------- transforms (always applied to every face) ----------
-  function applyAll(a: Partial<Konva.NodeConfig>) {
-    designs.forEach((d) => d.setAttrs(a));
-    saveTransform();
+  // ---------- transforms (applied to the selected element, on every face) ----------
+  function applyAll(el: El, a: Partial<Konva.NodeConfig>) {
+    faces.forEach((f) => f.els[el].setAttrs(a));
+    saveTransform(el);
     tr.forceUpdate();
     changed();
   }
-  const cur = () => designs[0];
+  const cur = () => faces[0].els[state.selected];
   const zoomBy = (f: number) => {
-    const s = clamp(cur().scaleX() * f, zoomMin(), zoomMax());
-    applyAll({ scaleX: s, scaleY: s });
+    const [lo, hi] = zoomRange(state.selected);
+    const s = clamp(cur().scaleX() * f, lo, hi);
+    applyAll(state.selected, { scaleX: s, scaleY: s });
   };
-  const rotateBy = (deg: number) => applyAll({ rotation: cur().rotation() + deg });
+  const rotateBy = (deg: number) => applyAll(state.selected, { rotation: cur().rotation() + deg });
   // Steps are in face px, so scale them with the product's design scale for a similar on-screen distance.
-  const moveBy = (dx: number, dy: number) => applyAll({ x: cur().x() + dx * P.design.scale, y: cur().y() + dy * P.design.scale });
+  const moveBy = (dx: number, dy: number) => applyAll(state.selected, { x: cur().x() + dx * P.design.scale, y: cur().y() + dy * P.design.scale });
 
-  function selectedFaceIndex() {
-    const n = tr.nodes()[0];
-    return n ? designs.indexOf(n as Konva.Group) : -1;
-  }
-  function select(i: number) {
-    tr.nodes(i >= 0 && faces[i]?.face.visible() ? [designs[i]] : []);
-    printArea.visible(P.mockup === 'tshirt' && tr.nodes().length > 0);
-  }
   const lastVisible = () => faces.map((f) => f.face.visible()).lastIndexOf(true);
+  /**
+   * Make `el` the element being edited. Handles are shown on face `i` (default: the visible face) unless i = -1.
+   * Also highlights it in the "Edit" switch and its section in the panel.
+   */
+  function select(el: El, i = lastVisible()) {
+    state.selected = el;
+    const n = i >= 0 && faces[i]?.face.visible() ? faces[i].els[el] : undefined;
+    tr.nodes(n?.visible() ? [n] : []);
+    selFace = tr.nodes().length ? i : -1;
+    printArea.visible(P.mockup === 'tshirt' && selFace >= 0);
+    root.querySelectorAll<HTMLButtonElement>('[data-el]').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.el === el);
+      b.setAttribute('aria-checked', String(b.dataset.el === el));
+    });
+    root.querySelectorAll<HTMLElement>('.pc-text').forEach((f) => f.classList.toggle('is-editing', f.dataset.section === el));
+    mirrorBtn.hidden = el !== 'pet';
+    uiLayer.batchDraw();
+  }
+  const deselect = () => select(state.selected, -1);
+  /** The element (and face) under a stage event target, if any. */
+  function hitEl(target: Konva.Node): [El, number] | undefined {
+    const n = target.findAncestor('.el', true);
+    if (!n) return;
+    const el = n.getAttr('el') as El;
+    return [el, faces.findIndex((f) => f.els[el] === n)];
+  }
   const openUpload = () => root.querySelector<HTMLInputElement>('input[type=file][data-photo]')?.click();
 
   stage.on('click tap', (e) => {
-    const design = e.target.findAncestor('.design', true) as Konva.Group | undefined;
-    if (!design) {
-      select(-1);
-      return;
-    }
-    select(designs.indexOf(design));
-    if (!state.photo) openUpload(); // tapping the example invites the upload
+    const hit = hitEl(e.target);
+    if (!hit) return deselect();
+    select(...hit);
+    if (hit[0] === 'pet' && !state.photo) openUpload(); // tapping the example pet invites the upload
   });
-  // Pressing on a design selects it immediately (so you see handles while dragging).
+  // Pressing on an element selects it immediately (so you see handles while dragging).
   stage.on('mousedown touchstart', (e) => {
-    const design = e.target.findAncestor('.design', true) as Konva.Group | undefined;
-    if (design) select(designs.indexOf(design));
+    const hit = hitEl(e.target);
+    if (hit) select(...hit);
   });
+  // Double-click a text to type in it.
+  stage.on('dblclick dbltap', (e) => {
+    const el = hitEl(e.target)?.[0];
+    if (el && el !== 'pet') $<HTMLInputElement>(`[data-text=${el}]`).focus();
+  });
+  stage.on('mouseover', (e) => (stageEl.style.cursor = hitEl(e.target) ? 'move' : ''));
+  stage.on('mouseout', () => (stageEl.style.cursor = ''));
 
-  // Mouse wheel zoom (only while the design is selected, so the page still scrolls otherwise)
+  // Mouse wheel zoom (only while something is selected, so the page still scrolls otherwise)
   stageEl.addEventListener(
     'wheel',
     (e) => {
-      if (selectedFaceIndex() < 0) return;
+      if (selFace < 0) return;
       e.preventDefault();
       zoomBy(e.deltaY < 0 ? 1.05 : 1 / 1.05);
     },
@@ -390,9 +449,9 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   let lastDist = 0;
   stage.on('touchmove', (e) => {
     const t = e.evt.touches;
-    if (t.length !== 2) return;
+    if (t.length !== 2 || selFace < 0) return;
     e.evt.preventDefault();
-    designs.forEach((d) => d.isDragging() && d.stopDrag());
+    faces.forEach((f) => ELS.forEach((el) => f.els[el].isDragging() && f.els[el].stopDrag()));
     const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     if (lastDist) zoomBy(dist / lastDist);
     lastDist = dist;
@@ -414,15 +473,18 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const fn = actions[e.key];
     if (!fn) return;
     e.preventDefault();
-    if (selectedFaceIndex() < 0) select(lastVisible());
+    if (selFace < 0) select(state.selected);
     fn();
   });
+
+  // "Edit:" switch (the easy way to pick a small text on a phone)
+  root.querySelectorAll<HTMLButtonElement>('[data-el]').forEach((b) => b.addEventListener('click', () => select(b.dataset.el as El)));
 
   // Toolbar
   const mirrorBtn = $('[data-tool=mirror]');
   root.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) =>
     b.addEventListener('click', () => {
-      if (selectedFaceIndex() < 0) select(lastVisible());
+      if (selFace < 0) select(state.selected);
       const step = 40;
       switch (b.dataset.tool) {
         case 'zoomIn': return zoomBy(1.1);
@@ -436,12 +498,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
         case 'mirror':
           state.mirror = !state.mirror;
           mirrorBtn.classList.toggle('is-active', state.mirror);
-          return rebuildDesigns();
+          return rebuildPets();
         case 'reset':
           state.mirror = false;
           mirrorBtn.classList.remove('is-active');
-          designs.forEach(buildDesign);
-          return applyAll(toAttrs(defaultTransform()));
+          delete state.transforms[P.id];
+          faces.forEach((f) => buildPet(f.els.pet));
+          ELS.forEach((el) => faces.forEach((f) => f.els[el].setAttrs(toAttrs(defaultTransform(P, el)))));
+          tr.forceUpdate();
+          return changed();
       }
     }),
   );
@@ -482,7 +547,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       printArea.setAttrs({ x: f.x(), y: f.y(), width: FW * f.scaleX(), height: FH * f.scaleY(), stroke: dark ? 'rgba(255,255,255,0.6)' : 'rgba(40,30,20,0.4)' });
     }
     photoNode.setAttrs({ width: cw, height: ch });
-    if (selectedFaceIndex() >= 0 && !faces[selectedFaceIndex()].face.visible()) select(lastVisible());
+    if (selFace >= 0 && !faces[selFace].face.visible()) select(state.selected);
     tr.forceUpdate();
     compose();
   }
@@ -571,9 +636,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       const f = makeFace(p, p.sides - 1, false);
       thumbLayer.add(f.face);
       f.bg?.image(bgImg);
-      f.design.setAttrs(toAttrs(state.transforms[p.id] ?? defaultTransform(p)));
-      buildDesign(f.design);
-      f.design.find('.placeholder').forEach((n) => n.visible(false));
+      f.face.find('.placeholder').forEach((n) => n.visible(false));
       const fw = p.print.width / p.sides;
       const r = flatRect(m.def, view, fw, p.print.height);
       f.face.setAttrs({ x: r.x, y: r.y, scaleX: r.scale, scaleY: r.scale });
@@ -602,13 +665,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     pctx.drawImage(print, 0, 0, prev.width, prev.height);
     const options: Record<string, string> = {
       Product: P.label,
-      'Pet name': state.name,
+      'Pet name': state.text.name.value,
       Style: tpl.styles.find((s) => s.id === state.style)!.label,
       ...(P.background ? { Background: tpl.backgrounds.find((b) => b.id === state.background)!.label } : {}),
       ...(shirt ? { 'Shirt color': shirt.label } : {}),
-      Greeting: state.greeting,
-      Font: state.font,
-      'Text color': state.textColor,
+      'Name font': state.text.name.font,
+      'Name color': state.text.name.color,
+      Greeting: state.text.greeting.value,
+      'Greeting font': state.text.greeting.font,
+      'Greeting color': state.text.greeting.color,
       Mirrored: state.mirror ? 'Yes' : 'No',
     };
     return { templateId: tpl.id, productId: P.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
@@ -630,8 +695,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
           <span class="pc-upload-text">${esc(text)}</span>
           ${state.busy ? '' : '<small class="pc-upload-tip">Tip: a sharp photo showing your whole pet works best. Ears, paws or tail cut off in the photo stay cut off.</small>'}
         </span>
-      </label>
-      <input type="text" class="pc-input" data-field="name" maxlength="14" placeholder="Pet name" value="${esc(state.name)}">`;
+      </label>`;
   }
 
   function renderStyles() {
@@ -658,14 +722,23 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   function renderAll() {
     renderPetPanel();
     renderStyles();
-    rebuildDesigns();
+    rebuildPets();
   }
 
   function syncPanel() {
     root.querySelectorAll<HTMLButtonElement>('[data-field=background] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.background));
-    root.querySelectorAll<HTMLButtonElement>('[data-field=textColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.textColor));
     root.querySelectorAll<HTMLButtonElement>('[data-field=shirtColor] button').forEach((b) => b.classList.toggle('is-active', b.dataset.v === state.shirtColor));
-    $<HTMLSelectElement>('[data-field=font]').value = state.font;
+    root.querySelectorAll<HTMLElement>('.pc-text').forEach((fs) => {
+      const t = state.text[fs.dataset.section as TextEl];
+      fs.querySelectorAll<HTMLButtonElement>('[data-font]').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.font === t.font);
+        b.setAttribute('aria-checked', String(b.dataset.font === t.font));
+      });
+      fs.querySelectorAll<HTMLButtonElement>('[data-color]').forEach((b) => {
+        b.classList.toggle('is-active', b.dataset.color === t.color);
+        b.setAttribute('aria-checked', String(b.dataset.color === t.color));
+      });
+    });
   }
 
   $('[data-field=background]').innerHTML = tpl.backgrounds
@@ -674,11 +747,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   $('[data-field=shirtColor]').innerHTML = (tshirt?.colors ?? [])
     .map((c) => `<button type="button" data-v="${c.id}" style="--c:${c.hex}" aria-label="${c.label}" title="${c.label}"></button>`)
     .join('');
-  $<HTMLSelectElement>('[data-field=font]').innerHTML = tpl.fonts.map((f) => `<option value="${f}">${f}</option>`).join('');
-  $('[data-field=textColor]').innerHTML = tpl.textColors
-    .map((c) => `<button type="button" data-v="${c}" style="--c:${c}" aria-label="Text color ${c}"></button>`)
-    .join('');
-  $<HTMLInputElement>('[data-field=greeting]').value = state.greeting;
+  root.querySelectorAll<HTMLInputElement>('[data-text]').forEach((i) => (i.value = state.text[i.dataset.text as TextEl].value));
 
   const pick = (e: Event) => (e.target as HTMLElement).closest('button')?.dataset.v;
   root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach((b) =>
@@ -693,11 +762,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     const v = pick(e);
     if (!v) return;
     state.background = v;
-    state.textColor = tpl.backgrounds.find((b) => b.id === v)!.textColor;
+    // Texts follow the background's matching colour, unless the customer picked one themselves.
+    const color = tpl.backgrounds.find((b) => b.id === v)!.textColor;
+    for (const el of ['name', 'greeting'] as TextEl[]) {
+      if (state.text[el].picked) continue;
+      state.text[el].color = color;
+      applyText(el);
+    }
     void applyBackground();
-    applyText();
     syncPanel();
-    rebuildDesigns();
   });
   $('[data-field=shirtColor]').addEventListener('click', (e) => {
     const v = pick(e);
@@ -707,32 +780,28 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     layout();
     scheduleThumbs();
   });
-  $('[data-field=textColor]').addEventListener('click', (e) => {
-    const v = pick(e);
-    if (!v) return;
-    state.textColor = v;
-    applyText();
-    syncPanel();
-    rebuildDesigns();
-  });
-  $('[data-field=greeting]').addEventListener('input', (e) => {
-    state.greeting = (e.target as HTMLInputElement).value;
-    applyText();
-    changed();
-  });
-  $('[data-field=font]').addEventListener('change', async (e) => {
-    state.font = (e.target as HTMLSelectElement).value;
-    await document.fonts.load(`80px "${state.font}"`);
-    applyText();
-    rebuildDesigns();
-  });
-
-  petEl.addEventListener('input', (e) => {
-    const t = e.target as HTMLInputElement;
-    if (t.dataset.field === 'name') {
-      state.name = t.value;
-      rebuildDesigns();
-    }
+  // Text sections: anything you do in one selects that text on the product, so you see what you're changing.
+  root.querySelectorAll<HTMLElement>('.pc-text').forEach((fs) => {
+    const el = fs.dataset.section as TextEl;
+    const t = state.text[el];
+    fs.addEventListener('focusin', () => state.selected !== el && select(el));
+    fs.addEventListener('pointerdown', () => state.selected !== el && select(el));
+    fs.addEventListener('input', (e) => {
+      t.value = (e.target as HTMLInputElement).value;
+      applyText(el);
+    });
+    fs.addEventListener('click', async (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (b?.dataset.color) {
+        t.color = b.dataset.color;
+        t.picked = true;
+      } else if (b?.dataset.font) {
+        t.font = b.dataset.font;
+        await document.fonts.load(`80px "${t.font}"`);
+      } else return;
+      syncPanel();
+      applyText(el);
+    });
   });
   petEl.addEventListener('change', (e) => {
     const t = e.target as HTMLInputElement;
@@ -745,7 +814,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     state.style = id;
     state.error = '';
     renderStyles();
-    rebuildDesigns();
+    rebuildPets();
     // Paint the newly picked style automatically (once; cached afterwards).
     if (state.photo && !own() && !state.busy) void paint(id);
   });
@@ -795,7 +864,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     }
     state.busy = false;
     renderAll();
-    select(lastVisible());
+    select('pet');
     // The customer may have picked another style while we were painting.
     if (state.style !== style && !own() && !state.error) void paint(state.style);
   }

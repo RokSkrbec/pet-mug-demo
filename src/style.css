@@ -42,7 +42,28 @@ body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
 
 .pc-tools { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
 .pc-tools + .pc-tools { margin-top: 8px; }
-.pc-tools-wide { grid-template-columns: 1fr 1fr; }
+.pc-tools-wide { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+
+/* "Edit: Pet | Name | Greeting": which element the buttons below act on (mirrors the selection on the stage). */
+.pc-els { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.pc-els > span { color: var(--muted); font-size: 14px; margin-right: 4px; }
+.pc-els button {
+  flex: 1; max-width: 140px; height: 40px; font: inherit; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+}
+.pc-els button:hover { background: var(--bg); }
+.pc-els button.is-active { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* Text sections: the one being edited on the product is outlined. */
+.pc-panel fieldset.pc-text { transition: border-color .15s, box-shadow .15s; }
+.pc-panel fieldset.pc-text.is-editing { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.pc-fonts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-fonts button {
+  font-size: 17px; line-height: 1.2; padding: 6px 12px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 10px; cursor: pointer; white-space: nowrap;
+}
+.pc-fonts button:hover { background: var(--bg); }
+.pc-fonts button.is-active { border-color: var(--accent); background: var(--accent-soft); }
 .pc-tools button {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: 48px; font: inherit; color: var(--ink); background: #fff;
