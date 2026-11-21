@@ -23,7 +23,7 @@ npm run build    # static files in dist/ → deploy to Cloudflare Pages / Vercel
 | `src/petPhoto.ts` | Photo downscale for upload; cut-out of the AI illustration + trim. |
 | `src/chromaKey.ts` | Green-screen key: the AI paints the pet on flat green, this removes it (with soft edges and no green halo). No ML model, ~40 ms. |
 | `src/ai.ts` | Client for the AI worker. |
-| `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; three independent elements (pet, name, greeting) are edited directly on the product mockup: tap to select (or the "Edit:" switch), drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror (pet), reset positions. Name and greeting each have their own font and colour; positions are kept per product. |
+| `src/customizer.ts` | `mountCustomizer(el, template, { onAddToCart })`: the embeddable widget. One pet, product switcher. A print has `sides` faces (2 on a mug) with the same design on each; three independent elements (pet, Text 1 = greeting, Text 2 = pet name; texts can be switched off) are edited directly on the product mockup: tap to select (or the "Edit:" switch), drag, handles, wheel/pinch zoom, arrow keys, toolbar, mirror (pet), reset positions. Each text has their own font and colour; positions are kept per product. |
 | `src/photoMockup.ts` | Photo-realistic preview: warps the print onto a real product photo and multiplies it with the photo's shading. |
 
 ## Realistic preview

@@ -55,8 +55,21 @@ body { margin: 0; padding: 24px 16px 48px; background: var(--bg); }
 .pc-els button.is-active { background: var(--ink); border-color: var(--ink); color: #fff; }
 
 /* Text sections: the one being edited on the product is outlined. */
-.pc-panel fieldset.pc-text { transition: border-color .15s, box-shadow .15s; }
-.pc-panel fieldset.pc-text.is-editing { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+/* Text sections: the one being edited on the product gets a soft accent (border colour only, so the legend gap stays). */
+.pc-panel fieldset.pc-text { transition: border-color .15s, background-color .15s; }
+.pc-panel fieldset.pc-text.is-editing { border-color: var(--accent); background: #fffbfa; }
+.pc-panel fieldset.pc-text:disabled > :not(legend) { opacity: .4; }
+.pc-panel fieldset.pc-text:disabled button { cursor: default; }
+.pc-els button:disabled { opacity: .4; cursor: default; background: #fff; }
+
+/* On/off switch in a section title */
+.pc-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.pc-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pc-switch-ui { position: relative; width: 34px; height: 20px; border-radius: 999px; background: var(--line); transition: background-color .15s; flex: none; }
+.pc-switch-ui::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.pc-switch input:checked + .pc-switch-ui { background: var(--ink); }
+.pc-switch input:checked + .pc-switch-ui::after { transform: translateX(14px); }
+.pc-switch input:focus-visible + .pc-switch-ui { outline: 2px solid var(--focus); outline-offset: 2px; }
 .pc-fonts { display: flex; flex-wrap: wrap; gap: 6px; }
 .pc-fonts button {
   font-size: 17px; line-height: 1.2; padding: 6px 12px; color: var(--ink); background: #fff;

@@ -56,8 +56,12 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 /** The three things on a print that the customer can move, resize and rotate independently. */
 type El = 'pet' | 'name' | 'greeting';
 type TextEl = Exclude<El, 'pet'>;
-const ELS: El[] = ['pet', 'name', 'greeting'];
-const EL_LABEL: Record<El, string> = { pet: 'Pet', name: 'Name', greeting: 'Greeting' };
+// Texts are named by position (Text 1 = top, Text 2 = under the pet), not by purpose: they come prefilled with a
+// greeting and the pet's name, but the customer can write anything in them (or switch them off).
+const ELS: El[] = ['pet', 'greeting', 'name'];
+const TEXTS: TextEl[] = ['greeting', 'name'];
+const EL_LABEL: Record<El, string> = { pet: 'Pet', greeting: 'Text 1', name: 'Text 2' };
+const TEXT_HINT: Record<TextEl, string> = { greeting: 'e.g. a greeting', name: "e.g. your pet's name" };
 
 interface Face {
   face: Konva.Group;
@@ -78,9 +82,9 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     /** The two texts, each with its own font and colour. `picked`: the customer chose the colour (a new background
      *  then no longer resets it to the background's matching colour). */
     text: {
-      name: { value: tpl.petName.default, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false },
-      greeting: { value: tpl.greetingDefault, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false },
-    } as Record<TextEl, { value: string; font: string; color: string; picked: boolean }>,
+      name: { value: tpl.petName.default, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false, on: true },
+      greeting: { value: tpl.greetingDefault, font: tpl.fonts[0], color: tpl.backgrounds[0].textColor, picked: false, on: true },
+    } as Record<TextEl, { value: string; font: string; color: string; picked: boolean; on: boolean }>,
     /** Element the tool buttons act on (and that has handles when selected on the stage). */
     selected: 'pet' as El,
     mirror: false,
@@ -110,7 +114,7 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       </div>
       <div data-panel="edit">
         <div class="pc-stage" tabindex="0" aria-label="Product preview. Drag the design. Arrow keys move it, plus and minus zoom."></div>
-        <p class="pc-hint"><span class="pc-hint-mouse">Click the pet, the name or the greeting to select it. Drag to move it, drag a corner to resize, or use the buttons below.</span><span class="pc-hint-touch">Tap the pet, the name or the greeting to select it. Drag to move it, pinch to resize, or use the buttons below.</span></p>
+        <p class="pc-hint"><span class="pc-hint-mouse">Click the pet or a text to select it. Drag to move it, drag a corner to resize, or use the buttons below.</span><span class="pc-hint-touch">Tap the pet or a text to select it. Drag to move it, pinch to resize, or use the buttons below.</span></p>
         <div class="pc-els" role="radiogroup" aria-label="What to edit">
           <span>Edit:</span>
           ${ELS.map((el) => `<button type="button" role="radio" data-el="${el}">${EL_LABEL[el]}</button>`).join('')}
@@ -136,15 +140,15 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
       <fieldset><legend>Style</legend><div class="pc-styles"></div><div class="pc-ai"></div><div class="pc-botcheck"></div></fieldset>
       <fieldset data-section="background"><legend>Background</legend><div class="pc-swatches" data-field="background"></div></fieldset>
       <fieldset data-section="shirt" hidden><legend>Shirt color</legend><div class="pc-colors pc-shirt-colors" data-field="shirtColor"></div></fieldset>
-      ${(['name', 'greeting'] as TextEl[])
-        .map(
-          (el) => `<fieldset class="pc-text" data-section="${el}"><legend>${el === 'name' ? 'Pet name' : 'Greeting'}</legend>
-        <input type="text" class="pc-input" data-text="${el}" maxlength="${el === 'name' ? 14 : 28}" placeholder="${el === 'name' ? 'Pet name (optional)' : 'Greeting (optional)'}">
+      ${TEXTS.map(
+          // A disabled fieldset disables everything inside except its legend, so the on/off switch keeps working.
+          (el) => `<fieldset class="pc-text" data-section="${el}">
+        <legend><label class="pc-switch"><input type="checkbox" role="switch" data-toggle="${el}" checked><span class="pc-switch-ui" aria-hidden="true"></span><span>${EL_LABEL[el]}</span></label></legend>
+        <input type="text" class="pc-input" data-text="${el}" maxlength="28" placeholder="${TEXT_HINT[el]}" aria-label="${EL_LABEL[el]}">
         <div class="pc-fonts" role="radiogroup" aria-label="Font">${tpl.fonts.map((f) => `<button type="button" role="radio" data-font="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</button>`).join('')}</div>
         <div class="pc-colors" role="radiogroup" aria-label="Text color">${tpl.textColors.map((c) => `<button type="button" role="radio" data-color="${c}" style="--c:${c}" aria-label="Color ${c}"></button>`).join('')}</div>
       </fieldset>`,
-        )
-        .join('')}
+        ).join('')}
       <div class="pc-actions">
         <button type="button" class="pc-btn pc-btn-ghost" data-action="download">Download print file</button>
         <button type="button" class="pc-btn" data-action="cart">Add to cart</button>
@@ -257,14 +261,14 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
 
   /** Text content, font and colour. Text is centred on its position, so editing it keeps it in place. */
   function styleText(t: Konva.Text, el: TextEl, p: ProductDef) {
-    const { value, font, color } = state.text[el];
+    const { value, font, color, on } = state.text[el];
     const base = el === 'name' ? tpl.petName.fontSize : p.greeting.fontSize;
     t.setAttrs({ text: value, fontFamily: font, fill: color, fontSize: base });
     // Long texts shrink to fit the print at their default size (the customer can still resize them).
     const maxW = (p.print.width / p.sides) * 0.86 / defaultTransform(p, el).scale;
     if (t.width() > maxW) t.fontSize((base * maxW) / t.width());
     t.offset({ x: t.width() / 2, y: t.height() / 2 });
-    t.visible(value.trim().length > 0);
+    t.visible(on && value.trim().length > 0);
   }
 
   /** (Re)build the print faces for the current product. */
@@ -665,15 +669,16 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
     pctx.drawImage(print, 0, 0, prev.width, prev.height);
     const options: Record<string, string> = {
       Product: P.label,
-      'Pet name': state.text.name.value,
       Style: tpl.styles.find((s) => s.id === state.style)!.label,
       ...(P.background ? { Background: tpl.backgrounds.find((b) => b.id === state.background)!.label } : {}),
       ...(shirt ? { 'Shirt color': shirt.label } : {}),
-      'Name font': state.text.name.font,
-      'Name color': state.text.name.color,
-      Greeting: state.text.greeting.value,
-      'Greeting font': state.text.greeting.font,
-      'Greeting color': state.text.greeting.color,
+      ...Object.fromEntries(
+        TEXTS.flatMap((el) => {
+          const t = state.text[el];
+          if (!t.on || !t.value.trim()) return [[EL_LABEL[el], '(off)']];
+          return [[EL_LABEL[el], t.value], [`${EL_LABEL[el]} font`, t.font], [`${EL_LABEL[el]} color`, t.color]];
+        }),
+      ),
       Mirrored: state.mirror ? 'Yes' : 'No',
     };
     return { templateId: tpl.id, productId: P.id, options, previewDataUrl: prev.toDataURL('image/jpeg', 0.85), printBlob };
@@ -784,11 +789,24 @@ export async function mountCustomizer(root: HTMLElement, tpl: Template, opts: Cu
   root.querySelectorAll<HTMLElement>('.pc-text').forEach((fs) => {
     const el = fs.dataset.section as TextEl;
     const t = state.text[el];
-    fs.addEventListener('focusin', () => state.selected !== el && select(el));
-    fs.addEventListener('pointerdown', () => state.selected !== el && select(el));
+    const chip = $<HTMLButtonElement>(`[data-el=${el}]`);
+    const pickThis = () => t.on && state.selected !== el && select(el);
+    fs.addEventListener('focusin', pickThis);
+    fs.addEventListener('pointerdown', pickThis);
     fs.addEventListener('input', (e) => {
-      t.value = (e.target as HTMLInputElement).value;
+      const i = e.target as HTMLInputElement;
+      if (i.dataset.text === undefined) return;
+      t.value = i.value;
       applyText(el);
+    });
+    // On/off switch: off hides the text on the product but keeps what was typed, font and colour.
+    $<HTMLInputElement>(`[data-toggle=${el}]`).addEventListener('change', (e) => {
+      t.on = (e.target as HTMLInputElement).checked;
+      (fs as HTMLFieldSetElement).disabled = !t.on;
+      chip.disabled = !t.on;
+      applyText(el);
+      if (t.on) select(el);
+      else if (state.selected === el) select('pet', -1);
     });
     fs.addEventListener('click', async (e) => {
       const b = (e.target as HTMLElement).closest('button');
